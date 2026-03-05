@@ -2,12 +2,18 @@ namespace MyDashboardApi.Models;
 
 public record StatMetric(int Value, int Variation);
 
+public record StatMetricDecimal(double Value, double Variation);
+
 public record DashboardStats(
-    StatMetric Customers,
-    StatMetric Conversions,
-    StatMetric Revenue,
+    StatMetricDecimal TotalTonnes,
+    StatMetricDecimal LineUptime,
+    StatMetricDecimal WastePercentage,
     StatMetric Orders);
 
-public record RevenuePoint(string Date, int Amount);
+public record EfficiencyPoint(string Date, double Value);
 
-public record Sale(string Id, string Date, string Status, string Email, int Amount);
+public record ProductionEvent(int Id, string Time, string Event, string Line, string Severity);
+
+public record MachineState(string Timestamp, string State, int DurationMinutes);
+
+public record Avatar(string Src, string Alt);

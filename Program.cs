@@ -68,8 +68,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapDashboardEndpoints();
-app.MapCustomerEndpoints();
-app.MapMailEndpoints();
+app.MapOrderEndpoints();
 app.MapNotificationEndpoints();
 app.MapMemberEndpoints();
 app.MapHub<DashboardHub>("/hubs/dashboard").RequireAuthorization();

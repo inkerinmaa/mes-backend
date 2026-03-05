@@ -17,18 +17,18 @@ public static class NotificationEndpoints
     {
         var senders = new[]
         {
-            new NotificationSender(201, "Alex Turner", "alex.turner@example.com", new Avatar("https://i.pravatar.cc/150?u=alex", "Alex Turner"), "subscribed", "Seattle, WA"),
-            new NotificationSender(202, "Rachel Green", "rachel.green@example.com", new Avatar("https://i.pravatar.cc/150?u=rachel", "Rachel Green"), "subscribed", "Boston, MA"),
-            new NotificationSender(203, "David Kim", "david.kim@example.com", new Avatar("https://i.pravatar.cc/150?u=david", "David Kim"), "subscribed", "Portland, OR")
+            new NotificationSender(201, "Line 1 Monitor", "line1@mes.local", new Avatar("https://i.pravatar.cc/150?u=line1", "Line 1"), "active", "Production Floor"),
+            new NotificationSender(202, "Line 2 Monitor", "line2@mes.local", new Avatar("https://i.pravatar.cc/150?u=line2", "Line 2"), "active", "Production Floor"),
+            new NotificationSender(203, "Line 3 Monitor", "line3@mes.local", new Avatar("https://i.pravatar.cc/150?u=line3", "Line 3"), "active", "Production Floor")
         };
 
         var bodies = new[]
         {
-            "Mentioned you in a comment on the production report.",
-            "Assigned you a new task: Review Q4 metrics.",
-            "Updated the shipping schedule for next week.",
-            "Completed the maintenance checklist for Line A.",
-            "Requested approval for overtime on Saturday."
+            "Temperature exceeded 85\u00b0C on Line 1 extruder zone 3.",
+            "Pressure dropped below 13 PSI on Line 2 hydraulic system.",
+            "Cycle time anomaly detected on Line 3 \u2014 15% above target.",
+            "Motor vibration warning on Line 1 main drive.",
+            "Conveyor belt speed deviation on Line 2 \u2014 automatic correction applied."
         };
 
         var now = DateTime.UtcNow;
@@ -38,7 +38,7 @@ public static class NotificationEndpoints
             Unread: i <= 2,
             Sender: senders[Random.Shared.Next(senders.Length)],
             Body: bodies[i - 1],
-            Date: now.AddHours(-Random.Shared.Next(1, 48)).ToString("o")))
+            Date: now.AddMinutes(-Random.Shared.Next(5, 120)).ToString("o")))
             .OrderByDescending(n => n.Date)
             .ToArray();
     }

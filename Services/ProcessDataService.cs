@@ -9,13 +9,9 @@ namespace MyDashboardApi.Services;
 /// Architecture decision: this service reads DIRECTLY from OPC UA subscriptions,
 /// NOT from ClickHouse. ClickHouse is for historical queries only.
 ///
-/// In production, this would:
-/// 1. Connect to OPC UA server (e.g., opc.tcp://plc-server:4840)
-/// 2. Subscribe to monitored items (temperature, pressure, cycle time, machine state)
-/// 3. On each value-change callback, immediately push to SignalR
-///
-/// A separate OpcUaCollectorService would batch-insert the same data into ClickHouse
-/// for historical storage and trend analysis.
+/// Pushes two SignalR events:
+/// - ProcessDataUpdated: raw telemetry (temperature, pressure, cycleTime, machineState)
+/// - StatsUpdated: aggregated KPIs (totalTonnes, lineUptime, wastePercentage)
 /// </summary>
 public class ProcessDataService : BackgroundService
 {
@@ -30,12 +26,16 @@ public class ProcessDataService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("ProcessDataService started (mock mode — simulating OPC UA telemetry)");
+        _logger.LogInformation("ProcessDataService started (mock mode)");
 
         var temperature = 72.0;
         var pressure = 14.7;
         var cycleTime = 45.0;
         var machineStates = new[] { "Running", "Running", "Running", "Idle", "Warning" };
+
+        var totalTonnes = 42.5;
+        var lineUptime = 94.2;
+        var wastePercentage = 3.1;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -48,6 +48,7 @@ public class ProcessDataService : BackgroundService
                 break;
             }
 
+            // Simulate OPC UA telemetry
             temperature += Random.Shared.NextDouble() * 4 - 2;
             temperature = Math.Clamp(temperature, 60, 90);
 
@@ -68,6 +69,29 @@ public class ProcessDataService : BackgroundService
                     pressure = Math.Round(pressure, 2),
                     cycleTime = Math.Round(cycleTime, 1),
                     machineState
+                },
+                CancellationToken.None);
+
+            // Simulate KPI updates
+            totalTonnes += Random.Shared.NextDouble() * 0.5;
+            totalTonnes = Math.Round(totalTonnes, 1);
+
+            lineUptime += Random.Shared.NextDouble() * 0.4 - 0.2;
+            lineUptime = Math.Round(Math.Clamp(lineUptime, 80, 100), 1);
+
+            wastePercentage += Random.Shared.NextDouble() * 0.4 - 0.2;
+            wastePercentage = Math.Round(Math.Clamp(wastePercentage, 0.5, 8), 1);
+
+            await _hubContext.Clients.All.SendAsync(
+                "StatsUpdated",
+                new
+                {
+                    totalTonnes,
+                    totalTonnesVariation = Math.Round(Random.Shared.NextDouble() * 10 - 2, 1),
+                    lineUptime,
+                    lineUptimeVariation = Math.Round(Random.Shared.NextDouble() * 6 - 2, 1),
+                    wastePercentage,
+                    wastePercentageVariation = Math.Round(Random.Shared.NextDouble() * 4 - 2, 1)
                 },
                 CancellationToken.None);
         }
