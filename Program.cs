@@ -1,6 +1,11 @@
+using Dapper;
+using MyDashboardApi.Database.Repositories;
 using MyDashboardApi.Endpoints;
 using MyDashboardApi.Hubs;
 using MyDashboardApi.Services;
+
+// Map snake_case SQL column names to PascalCase C# properties/constructors globally
+DefaultTypeMap.MatchNamesWithUnderscores = true;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -57,7 +62,17 @@ builder.Services.AddSignalR();
 builder.Services.AddHostedService<OrdersBackgroundService>();
 builder.Services.AddHostedService<ProcessDataService>();
 
+var connStr = builder.Configuration.GetConnectionString("Postgres")!;
+var dataSource = Npgsql.NpgsqlDataSource.Create(connStr);
+builder.Services.AddSingleton(dataSource);
+builder.Services.AddSingleton<IOrderRepository, OrderRepository>();
+builder.Services.AddSingleton<IUserRepository, UserRepository>();
+builder.Services.AddSingleton<ISkuRepository, SkuRepository>();
+
 var app = builder.Build();
+
+var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+startupLogger.LogInformation("MES API starting up...");
 
 if (app.Environment.IsDevelopment())
 {
@@ -67,8 +82,31 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Auto-provision any authenticated user into the users table on first request.
+// Uses an in-memory set so DB is only hit once per user per process lifetime.
+var provisionedUsers = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+app.Use(async (ctx, next) =>
+{
+    if (ctx.User.Identity?.IsAuthenticated == true)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value;
+        if (keycloakId != null && provisionedUsers.TryAdd(keycloakId, true))
+        {
+            var users = ctx.RequestServices.GetRequiredService<IUserRepository>();
+            var email    = ctx.User.FindFirst("email")?.Value ?? "";
+            var username = ctx.User.FindFirst("preferred_username")?.Value ?? "";
+            var fullName = ctx.User.FindFirst("name")?.Value
+                ?? $"{ctx.User.FindFirst("given_name")?.Value} {ctx.User.FindFirst("family_name")?.Value}".Trim();
+            await users.UpsertUserAsync(keycloakId, email, username, fullName);
+        }
+    }
+    await next();
+});
+
 app.MapDashboardEndpoints();
 app.MapOrderEndpoints();
+app.MapSkuEndpoints();
+app.MapUserEndpoints();
 app.MapNotificationEndpoints();
 app.MapMemberEndpoints();
 app.MapHub<DashboardHub>("/hubs/dashboard").RequireAuthorization();

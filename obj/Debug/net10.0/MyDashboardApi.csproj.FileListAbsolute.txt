@@ -40,3 +40,5 @@
 /home/nik/projects/MyDashboardApi/obj/Debug/net10.0/MyDashboardApi.genruntimeconfig.cache
 /home/nik/projects/MyDashboardApi/obj/Debug/net10.0/ref/MyDashboardApi.dll
 /home/nik/projects/MyDashboardApi/obj/Debug/net10.0/MyDashboardApi.sourcelink.json
+/home/nik/projects/MyDashboardApi/bin/Debug/net10.0/Npgsql.dll
+/home/nik/projects/MyDashboardApi/bin/Debug/net10.0/Dapper.dll

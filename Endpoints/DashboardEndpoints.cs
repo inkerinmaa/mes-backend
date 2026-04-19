@@ -127,6 +127,7 @@ public static class DashboardEndpoints
 
         return sequences.Select((seq, i) => new Order(
             Id: 4500 + i,
+            OrderNumber: $"WO-DEMO-{4500 + i}",
             Sku: skus[Random.Shared.Next(skus.Length)],
             Priority: priorities[Random.Shared.Next(priorities.Length)],
             Quantity: Random.Shared.Next(100, 2001),
