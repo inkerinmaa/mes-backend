@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "5QOrhHVOAjk=",
+  "dgSpecHash": "f2c5JweS2Io=",
   "success": true,
-  "projectFilePath": "/home/nik/projects/MyDashboardApi/MyDashboardApi.csproj",
+  "projectFilePath": "/home/nik/projects/mes-backend/mes-backend.csproj",
   "expectedPackageFiles": [
     "/home/nik/.nuget/packages/dapper/2.1.35/dapper.2.1.35.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.aspnetcore.authentication.jwtbearer/10.0.3/microsoft.aspnetcore.authentication.jwtbearer.10.0.3.nupkg.sha512",

@@ -1,4 +1,4 @@
-# Project: MyDashboardApi
+# Project: mes-backend
 
 ## Stack
 - .NET 10 minimal API
@@ -11,72 +11,89 @@
 - Run dev: `dotnet run`
 - Build: `dotnet build`
 - Restore packages: `dotnet restore`
-- HTTP smoke tests: open `MyDashboardApi.http` in VS Code REST Client
+- HTTP smoke tests: open `MyDashboardApi.http` in VS Code REST Client (file kept as-is; filename doesn't affect functionality)
 
 ## Architecture
 - `Program.cs` — DI setup, middleware pipeline, endpoint mapping
 - `Endpoints/` — minimal API route handlers (one file per domain)
 - `Models/` — DTOs and request types
 - `Database/Repositories/` — Dapper-based repository implementations
-  - `IOrderRepository` / `OrderRepository` — order CRUD
+  - `IOrderRepository` / `OrderRepository` — order CRUD + cage scanning
   - `IUserRepository` / `UserRepository` — user upsert, role management
   - `ISkuRepository` / `SkuRepository` — SKU lookup
+  - `IUomRepository` / `UomRepository` — unit-of-measure lookup
+  - `ILogRepository` / `LogRepository` — structured app event log (read + write)
+  - `IMachineStateRepository` / `MachineStateRepository` — production line state timeline
 - `Hubs/DashboardHub.cs` — SignalR hub at `/hubs/dashboard`
-- `Services/` — background services pushing data via SignalR
-  - `ProcessDataService.cs` — simulates OPC UA telemetry every 3 s
+- `Services/` — background services and custom logging
+  - `ProcessDataService.cs` — simulates OPC UA telemetry every 3 s; also randomly transitions one production line to a new state every ~30 s, writes it to `machine_states`, and broadcasts `MachineStateUpdated { lineId }` via SignalR. In production this service would be replaced by a real OPC UA subscriber.
   - `OrdersBackgroundService.cs` — simulates business events every 5 s
+  - `DbLoggerProvider.cs` / `DbLogger` — custom `ILoggerProvider` that writes `MyDashboardApi.*` log lines to the `logs` table
 - `appsettings.json` — connection strings, OPC UA URL, auth config
 
 ## Database schema
 Schema lives in `~/projects/dwh/init.sql` — apply once after `docker compose up`:
 ```bash
-psql -h localhost -U nik -d mydb -f ~/projects/dwh/init.sql
+docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/init.sql
 ```
-The API no longer initializes or migrates the schema on startup.
+The API does not initialize or migrate the schema on startup.
 
-## MES Data Model
-Tables in PostgreSQL (auto-created on startup by `MesDb.InitializeAsync`):
+## Data Model
 
-| Table | Key columns |
-|-------|-------------|
-| `users` | `keycloak_id` (JWT sub), `email`, `username`, `full_name`, `last_login` |
-| `skus` | `code` (e.g. SKU-A100), `name`, `unit` |
-| `production_lines` | `id` (1–3), `name`, `status` |
-| `materials` | `code`, `name`, `unit`, `stock_quantity` |
-| `orders` | `order_number`, `sku_id`, `production_line_id`, `quantity_packages`, `priority`, `status`, `due_date`, `created_by_id` |
+| Table | Key columns | Notes |
+|-------|-------------|-------|
+| `users` | `keycloak_id`, `email`, `username`, `full_name`, `role`, `last_login` | Upserted on every login via JWT sub |
+| `uom` | `code` (kg/t/pcs/m/m2/m3/L/g), `name`, `type` | Unit of measure reference |
+| `skus` | `code`, `name`, `description`, `unit` | Product SKU catalogue |
+| `production_lines` | `id` (1–3), `name`, `status` | Fixed 3 lines |
+| `materials` | `code`, `name`, `unit`, `stock_quantity` | Raw material inventory |
+| `orders` | `order_number`, `sku_id`, `production_line_id`, `volume`, `uom_id`, `status`, `priority`, `due_date`, `comment`, `cage`, `cage_size`, `created_by_id`, `created_at`, `updated_at` | `cage=true` enables cage tracking; `cage_size` is packages-per-cage set at creation |
+| `cages` | `order_number`, `cage_guid`, `cage_size`, `packages`, `scanned_at`, `scanned_by_id` | One row per QR scan; `cage_size` copied from order at scan time; only `packages` is editable after |
+| `machine_states` | `production_line_id`, `state` (running/warning/stopped), `ts` | Append-only event log: one row per state change. Duration is computed dynamically as `LEAD(ts) OVER (...) - ts`; the active segment uses `NOW() - ts`. |
+| `logs` | `type` (USER/PROCESS/APP/EQUIPMENT/INTEGRATION), `message`, `level` (DEBUG/INFO/WARNING/ERROR/CRITICAL), `ts` | Structured event log; written automatically by `DbLoggerProvider` for all `MyDashboardApi.*` log lines ≥ INFO |
 
 ## Endpoints (all require JWT)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/dashboard/stats` | KPI metrics (mock) |
-| GET | `/api/dashboard/efficiency` | Production efficiency over date range (mock) |
-| GET | `/api/dashboard/events` | Recent production events (mock) |
-| GET | `/api/dashboard/states` | Machine state timeline (mock) |
-| GET | `/api/dashboard/current-orders` | Orders in queue snapshot (mock) |
-| GET | `/api/orders` | All active orders from PostgreSQL |
+| GET | `/api/dashboard/stats?lineId=` | KPI cards (mock, line-scoped) |
+| GET | `/api/dashboard/efficiency?period=&startDate=&endDate=&lineId=` | Line efficiency chart (mock) |
+| GET | `/api/dashboard/events?type=&level=&limit=` | Last N log entries from `logs` table |
+| GET | `/api/dashboard/states?lineId=` | Machine state timeline from `machine_states` |
+| GET | `/api/dashboard/current-orders` | Current order queue snapshot (mock) |
+| GET | `/api/logs?type=&level=&limit=` | Filtered log entries from `logs` table |
+| GET | `/api/orders` | All non-cancelled orders (with produced_packages) |
 | POST | `/api/orders` | Create a new work order |
-| GET | `/api/skus` | List all SKUs from PostgreSQL |
+| DELETE | `/api/orders/{id}` | Cancel an order (admin only) |
+| GET | `/api/orders/{id}` | Order detail with cage list |
+| POST | `/api/orders/{id}/cages` | Scan cage QR code (`{ qrData: "{order_number}|{uuid}" }`) |
+| PATCH | `/api/orders/{id}/cages/{cageId}/packages` | Update packages count for a cage |
+| DELETE | `/api/orders/{id}/cages/{cageId}` | Remove a scanned cage |
+| PATCH | `/api/orders/{id}/comment` | Update order comment |
+| GET | `/api/skus` | All SKUs |
+| GET | `/api/uoms` | All units of measure |
 | POST | `/api/me` | Upsert current user from JWT claims |
+| PATCH | `/api/me/name` | Update display name |
 | GET | `/api/members` | Team members (mock) |
 | GET | `/api/notifications` | Alerts (mock) |
-
-### POST /api/orders body
-```json
-{
-  "orderNumber": "WO-2024-001",
-  "skuCode": "SKU-A100",
-  "lineId": 1,
-  "quantityPackages": 500,
-  "priority": "Medium",
-  "dueDate": "2024-12-31"
-}
-```
+| POST | `/api/machine-states` | Insert a machine state event `{ lineId, state }` and broadcast `MachineStateUpdated` via SignalR |
 
 ## SignalR events (`/hubs/dashboard`)
 - `OrdersUpdated` — every 5 s, `{ value, variation }`
 - `ProcessDataUpdated` — every 3 s, `{ timestamp, temperature, pressure, cycleTime, machineState }`
 - `StatsUpdated` — every 3 s, `{ totalTonnes, lineUptime, wastePercentage, … }`
+- `MachineStateUpdated` — on every new `machine_states` row, `{ lineId }`. Sent by `ProcessDataService` (simulation, ~30 s) and by `POST /api/machine-states` (real machine events). Frontend re-fetches the timeline only for the affected line.
+
+## Key implementation details
+
+### Cage QR format
+QR code encodes `{order_number}|{uuid}`. The `ScanCage` endpoint parses the pipe-separated string, validates the order number matches the route param, then inserts into `cages` with `cage_size` and `packages` both set to the order's `cage_size`.
+
+### DbLoggerProvider
+Registered as `ILoggerProvider`. Intercepts all log calls where the category starts with `MyDashboardApi.` and level ≥ Information. Maps category → type: `UserRepository`→USER, `OrderRepository`→PROCESS, everything else→APP. Writes async fire-and-forget to the `logs` table; swallows its own errors to avoid infinite recursion.
+
+### Dapper mapping
+`DefaultTypeMap.MatchNamesWithUnderscores = true` is set globally — `snake_case` SQL columns map to `PascalCase` C# properties. Flat result types use positional records; types with nested lists (e.g., `OrderDetail` with `List<CageEntry>`) use POCO classes.
 
 ## Authentication config (`appsettings.json`)
 ```json
@@ -89,14 +106,14 @@ Tables in PostgreSQL (auto-created on startup by `MesDb.InitializeAsync`):
 }
 ```
 - **Authority** — must match the `iss` claim in the JWT
-- **BackchannelAuthority** — used internally to fetch JWKS/OIDC metadata over plain HTTP (avoids self-signed cert issues in dev)
-- **Audience** — must match the `aud` claim (requires audience mapper in Keycloak)
+- **BackchannelAuthority** — internal Keycloak endpoint for JWKS (avoids DNS/SSL in WSL)
+- **Audience** — must match the `aud` claim (requires Keycloak audience mapper)
 
 ## Rules
 - All route handlers live in `Endpoints/`, not in `Program.cs`
 - All DB access goes through a repository interface — never inline SQL in endpoints
 - Repositories are registered as singletons; `NpgsqlDataSource` is the shared connection pool
-- `DefaultTypeMap.MatchNamesWithUnderscores = true` is set globally — snake_case columns map to PascalCase properties automatically
+- `DefaultTypeMap.MatchNamesWithUnderscores = true` is set globally
 - Always keep `BackchannelAuthority` pointing to `http://localhost:8080` in dev
 - Background services must be registered with `AddHostedService<T>()` in `Program.cs`
 - Never commit real connection string passwords to source control

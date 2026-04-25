@@ -1,3 +1,4 @@
+using MyDashboardApi.Database.Repositories;
 using MyDashboardApi.Models;
 
 namespace MyDashboardApi.Endpoints;
@@ -14,35 +15,47 @@ public static class DashboardEndpoints
         group.MapGet("/states", GetStates).WithName("GetDashboardStates");
         group.MapGet("/current-orders", GetCurrentOrders).WithName("GetDashboardCurrentOrders");
 
+        app.MapGet("/api/logs", GetLogs).RequireAuthorization().WithName("GetLogs");
+
         return app;
     }
 
-    private static DashboardStats GetStats()
+    private static async Task<IResult> GetLogs(ILogRepository logs, string? type, string? level, int limit = 20)
     {
-        return new DashboardStats(
-            TotalTonnes: new StatMetricDecimal(
-                Math.Round(Random.Shared.NextDouble() * 80 + 20, 1),
-                Math.Round(Random.Shared.NextDouble() * 20 - 5, 1)),
-            LineUptime: new StatMetricDecimal(
-                Math.Round(Random.Shared.NextDouble() * 15 + 85, 1),
-                Math.Round(Random.Shared.NextDouble() * 10 - 3, 1)),
-            WastePercentage: new StatMetricDecimal(
-                Math.Round(Random.Shared.NextDouble() * 5 + 1, 1),
-                Math.Round(Random.Shared.NextDouble() * 6 - 3, 1)),
-            Orders: new StatMetric(Random.Shared.Next(100, 300), Random.Shared.Next(-5, 16)));
+        return Results.Ok(await logs.GetRecentAsync(limit, type, level));
     }
 
-    private static List<EfficiencyPoint> GetEfficiency(string? period, string? startDate, string? endDate)
+    private static DashboardStats GetStats(int lineId = 1)
+    {
+        // Seed per line so each line shows distinct but stable-ish base values
+        var rng = new Random(lineId * 17 + DateTime.UtcNow.Second);
+        return new DashboardStats(
+            TotalTonnes: new StatMetricDecimal(
+                Math.Round(rng.NextDouble() * 60 + (lineId * 15), 1),
+                Math.Round(rng.NextDouble() * 20 - 5, 1)),
+            LineUptime: new StatMetricDecimal(
+                Math.Round(rng.NextDouble() * 10 + (90 - lineId * 2), 1),
+                Math.Round(rng.NextDouble() * 10 - 3, 1)),
+            WastePercentage: new StatMetricDecimal(
+                Math.Round(rng.NextDouble() * 4 + lineId * 0.5, 1),
+                Math.Round(rng.NextDouble() * 6 - 3, 1)),
+            Orders: new StatMetric(rng.Next(50 + lineId * 30, 150 + lineId * 50), rng.Next(-5, 16)));
+    }
+
+    private static List<EfficiencyPoint> GetEfficiency(string? period, string? startDate, string? endDate, int lineId = 1)
     {
         var start = startDate != null ? DateOnly.Parse(startDate) : DateOnly.FromDateTime(DateTime.Now.AddDays(-14));
         var end = endDate != null ? DateOnly.Parse(endDate) : DateOnly.FromDateTime(DateTime.Now);
+
+        // Base efficiency differs per line so charts look distinct when switching
+        double baseEfficiency = lineId switch { 1 => 88, 2 => 82, _ => 76 };
 
         var points = new List<EfficiencyPoint>();
         var current = start;
 
         while (current <= end)
         {
-            var value = Math.Round(Random.Shared.NextDouble() * 25 + 70, 1);
+            var value = Math.Round(Random.Shared.NextDouble() * 15 + baseEfficiency, 1);
             points.Add(new EfficiencyPoint(current.ToString("yyyy-MM-dd"), value));
 
             current = period switch
@@ -56,65 +69,14 @@ public static class DashboardEndpoints
         return points;
     }
 
-    private static ProductionEvent[] GetEvents()
+    private static async Task<IResult> GetEvents(ILogRepository logs, string? type, string? level, int limit = 5)
     {
-        var events = new[]
-        {
-            "Order #{0} completed",
-            "Batch changeover started",
-            "Speed adjusted on Line {1}",
-            "Quality check passed",
-            "Pallet #{0} dispatched",
-            "Material loaded on Line {1}",
-            "Operator shift change",
-            "Cleaning cycle completed on Line {1}",
-            "Order #{0} started production",
-            "Packaging run finished"
-        };
-
-        var severities = new[] { "info", "info", "info", "warning", "info", "info", "info", "warning", "info", "info" };
-        var lines = new[] { "Line 1", "Line 2", "Line 3" };
-        var now = DateTime.UtcNow;
-
-        return Enumerable.Range(0, 8).Select(i =>
-        {
-            var line = lines[Random.Shared.Next(lines.Length)];
-            var orderId = Random.Shared.Next(4500, 4700);
-            var lineNum = line.Split(' ')[1];
-            var eventText = events[Random.Shared.Next(events.Length)]
-                .Replace("{0}", orderId.ToString())
-                .Replace("{1}", lineNum);
-
-            return new ProductionEvent(
-                Id: i + 1,
-                Time: now.AddMinutes(-Random.Shared.Next(5, 480)).ToString("o"),
-                Event: eventText,
-                Line: line,
-                Severity: severities[Random.Shared.Next(severities.Length)]);
-        })
-        .OrderByDescending(e => e.Time)
-        .ToArray();
+        return Results.Ok(await logs.GetRecentAsync(limit, type, level));
     }
 
-    private static MachineState[] GetStates()
+    private static async Task<IResult> GetStates(IMachineStateRepository machineStates, int lineId = 1)
     {
-        var states = new[] { "running", "running", "running", "running", "warning", "stopped" };
-        var now = DateTime.UtcNow;
-        var result = new List<MachineState>();
-
-        var current = now.AddHours(-8);
-        while (current < now)
-        {
-            var state = states[Random.Shared.Next(states.Length)];
-            var duration = Random.Shared.Next(10, 90);
-            result.Add(new MachineState(
-                Timestamp: current.ToString("o"),
-                State: state,
-                DurationMinutes: duration));
-            current = current.AddMinutes(duration);
-        }
-
-        return result.ToArray();
+        return Results.Ok(await machineStates.GetStatesForLineAsync(lineId));
     }
 
     private static Order[] GetCurrentOrders()
@@ -125,15 +87,20 @@ public static class DashboardEndpoints
 
         var sequences = new[] { "Previous", "In Progress", "Next", "Next+1" };
 
-        return sequences.Select((seq, i) => new Order(
-            Id: 4500 + i,
-            OrderNumber: $"WO-DEMO-{4500 + i}",
-            Sku: skus[Random.Shared.Next(skus.Length)],
-            Priority: priorities[Random.Shared.Next(priorities.Length)],
-            Quantity: Random.Shared.Next(100, 2001),
-            Line: Random.Shared.Next(1, 4),
-            DueDate: now.AddDays(i - 1).ToString("yyyy-MM-dd"),
-            Sequence: seq
-        )).ToArray();
+        return sequences.Select((seq, i) => new Order
+        {
+            Id = 4500 + i,
+            OrderNumber = $"WO-DEMO-{4500 + i}",
+            Sku = skus[Random.Shared.Next(skus.Length)],
+            Priority = priorities[Random.Shared.Next(priorities.Length)],
+            Volume = Random.Shared.Next(100, 2001),
+            UomCode = "pcs",
+            Line = Random.Shared.Next(1, 4),
+            DueDate = now.AddDays(i - 1).ToString("yyyy-MM-dd"),
+            Sequence = seq,
+            Cage = false,
+            ProducedPackages = 0,
+            Comment = null
+        }).ToArray();
     }
 }

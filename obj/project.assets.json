@@ -462,11 +462,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/nik/projects/MyDashboardApi/MyDashboardApi.csproj",
-      "projectName": "MyDashboardApi",
-      "projectPath": "/home/nik/projects/MyDashboardApi/MyDashboardApi.csproj",
+      "projectUniqueName": "/home/nik/projects/mes-backend/mes-backend.csproj",
+      "projectName": "mes-backend",
+      "projectPath": "/home/nik/projects/mes-backend/mes-backend.csproj",
       "packagesPath": "/home/nik/.nuget/packages/",
-      "outputPath": "/home/nik/projects/MyDashboardApi/obj/",
+      "outputPath": "/home/nik/projects/mes-backend/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/nik/.nuget/NuGet/NuGet.Config"

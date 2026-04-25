@@ -11,6 +11,7 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
     {
         public int Id { get; set; }
         public string Role { get; set; } = "";
+        public string FullName { get; set; } = "";
         public bool IsNew { get; set; }
     }
 
@@ -20,7 +21,7 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
         public string Role { get; set; } = "";
     }
 
-    public async Task<(int Id, string Role)> UpsertUserAsync(
+    public async Task<(int Id, string Role, string FullName)> UpsertUserAsync(
         string keycloakId, string email, string username, string fullName)
     {
         await using var conn = await dataSource.OpenConnectionAsync();
@@ -32,11 +33,10 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
                 CASE WHEN NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin') THEN 'admin' ELSE 'viewer' END
             )
             ON CONFLICT (keycloak_id) DO UPDATE
-                SET email     = EXCLUDED.email,
-                    username  = EXCLUDED.username,
-                    full_name = EXCLUDED.full_name,
+                SET email      = EXCLUDED.email,
+                    username   = EXCLUDED.username,
                     last_login = NOW()
-            RETURNING id, role, (xmax = 0) AS is_new
+            RETURNING id, role, COALESCE(full_name, '') AS full_name, (xmax = 0) AS is_new
             """,
             new
             {
@@ -51,7 +51,7 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
         else
             logger.LogInformation("User synced: {Username} | Role={Role} | LastLogin=NOW", username, result.Role);
 
-        return (result.Id, result.Role);
+        return (result.Id, result.Role, result.FullName);
     }
 
     public async Task<(int? Id, string? Role)> GetUserContextAsync(string keycloakId)
@@ -88,5 +88,15 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
             new { newRole, userId });
 
         logger.LogInformation("Role updated: user {Username} (id={Id}) → {Role}", username, userId, newRole);
+    }
+
+    public async Task UpdateUserNameAsync(string keycloakId, string fullName)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET full_name = @fullName WHERE keycloak_id = @keycloakId",
+            new { fullName, keycloakId });
+
+        logger.LogInformation("Display name updated for {KeycloakId}: {FullName}", keycloakId, fullName);
     }
 }

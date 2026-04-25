@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using MyDashboardApi.Database.Repositories;
 using MyDashboardApi.Hubs;
 
 namespace MyDashboardApi.Services;
@@ -16,11 +17,21 @@ namespace MyDashboardApi.Services;
 public class ProcessDataService : BackgroundService
 {
     private readonly IHubContext<DashboardHub> _hubContext;
+    private readonly IMachineStateRepository _machineStateRepo;
     private readonly ILogger<ProcessDataService> _logger;
 
-    public ProcessDataService(IHubContext<DashboardHub> hubContext, ILogger<ProcessDataService> logger)
+    // Weighted pool — running appears most often to match realistic uptime
+    private static readonly string[] _statePool = ["running", "running", "running", "running", "warning", "warning", "stopped"];
+    private readonly string[] _lineStates = ["running", "running", "running"];
+    private int _tickCount = 0;
+
+    public ProcessDataService(
+        IHubContext<DashboardHub> hubContext,
+        IMachineStateRepository machineStateRepo,
+        ILogger<ProcessDataService> logger)
     {
         _hubContext = hubContext;
+        _machineStateRepo = machineStateRepo;
         _logger = logger;
     }
 
@@ -31,7 +42,6 @@ public class ProcessDataService : BackgroundService
         var temperature = 72.0;
         var pressure = 14.7;
         var cycleTime = 45.0;
-        var machineStates = new[] { "Running", "Running", "Running", "Idle", "Warning" };
 
         var totalTonnes = 42.5;
         var lineUptime = 94.2;
@@ -58,7 +68,32 @@ public class ProcessDataService : BackgroundService
             cycleTime += Random.Shared.NextDouble() * 6 - 3;
             cycleTime = Math.Clamp(cycleTime, 30, 60);
 
-            var machineState = machineStates[Random.Shared.Next(machineStates.Length)];
+            // Every 10 ticks (~30 s) randomly transition one line to a new state
+            _tickCount++;
+            if (_tickCount % 10 == 0)
+            {
+                var lineIndex = Random.Shared.Next(3);
+                var newState = _statePool[Random.Shared.Next(_statePool.Length)];
+                if (newState != _lineStates[lineIndex])
+                {
+                    _lineStates[lineIndex] = newState;
+                    try
+                    {
+                        await _machineStateRepo.InsertStateAsync(lineIndex + 1, newState);
+                        await _hubContext.Clients.All.SendAsync(
+                            "MachineStateUpdated",
+                            new { lineId = lineIndex + 1 },
+                            CancellationToken.None);
+                        _logger.LogInformation("Line {Line} state changed to {State}", lineIndex + 1, newState);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to record machine state change");
+                    }
+                }
+            }
+
+            var machineState = _lineStates[0];
 
             await _hubContext.Clients.All.SendAsync(
                 "ProcessDataUpdated",

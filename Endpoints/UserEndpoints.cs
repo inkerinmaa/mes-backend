@@ -10,6 +10,7 @@ public static class UserEndpoints
     {
         var group = app.MapGroup("/api").RequireAuthorization();
         group.MapPost("/me", SyncUser).WithName("SyncUser");
+        group.MapPatch("/me/name", UpdateName).WithName("UpdateUserName");
         group.MapGet("/users", GetUsers).WithName("GetUsers");
         group.MapPatch("/users/{id:int}/role", UpdateRole).WithName("UpdateUserRole");
         return app;
@@ -26,8 +27,21 @@ public static class UserEndpoints
         var fullName = ctx.User.FindFirst("name")?.Value
             ?? $"{ctx.User.FindFirst("given_name")?.Value} {ctx.User.FindFirst("family_name")?.Value}".Trim();
 
-        var (id, role) = await users.UpsertUserAsync(keycloakId, email, username, fullName);
-        return Results.Ok(new { id, email, username, fullName, role });
+        var (id, role, dbFullName) = await users.UpsertUserAsync(keycloakId, email, username, fullName);
+        // Return full_name from the DB — user may have edited it via settings, and
+        // the ON CONFLICT clause does not overwrite full_name on subsequent logins.
+        return Results.Ok(new { id, email, username, fullName = dbFullName, role });
+    }
+
+    private static async Task<IResult> UpdateName(
+        UpdateNameRequest req, IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        if (string.IsNullOrWhiteSpace(req.FullName))
+            return Results.BadRequest(new { error = "Name cannot be empty" });
+
+        await users.UpdateUserNameAsync(keycloakId, req.FullName.Trim());
+        return Results.Ok(new { fullName = req.FullName.Trim() });
     }
 
     private static async Task<IResult> GetUsers(IUserRepository users)

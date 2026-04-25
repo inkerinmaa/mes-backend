@@ -3,6 +3,7 @@ using MyDashboardApi.Database.Repositories;
 using MyDashboardApi.Endpoints;
 using MyDashboardApi.Hubs;
 using MyDashboardApi.Services;
+using MyDashboardApi.Models;
 
 // Map snake_case SQL column names to PascalCase C# properties/constructors globally
 DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -68,6 +69,10 @@ builder.Services.AddSingleton(dataSource);
 builder.Services.AddSingleton<IOrderRepository, OrderRepository>();
 builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<ISkuRepository, SkuRepository>();
+builder.Services.AddSingleton<IUomRepository, UomRepository>();
+builder.Services.AddSingleton<ILogRepository, LogRepository>();
+builder.Services.AddSingleton<IMachineStateRepository, MachineStateRepository>();
+builder.Logging.AddProvider(new DbLoggerProvider(Npgsql.NpgsqlDataSource.Create(connStr)));
 
 var app = builder.Build();
 
@@ -104,8 +109,10 @@ app.Use(async (ctx, next) =>
 });
 
 app.MapDashboardEndpoints();
+app.MapMachineStateEndpoints();
 app.MapOrderEndpoints();
 app.MapSkuEndpoints();
+app.MapUomEndpoints();
 app.MapUserEndpoints();
 app.MapNotificationEndpoints();
 app.MapMemberEndpoints();
