@@ -11,6 +11,7 @@
           "Dapper": "2.1.35",
           "Microsoft.AspNetCore.Authentication.JwtBearer": "10.0.3",
           "Microsoft.AspNetCore.OpenApi": "10.0.1",
+          "Microsoft.AspNetCore.SignalR.StackExchangeRedis": "10.0.7",
           "Npgsql": "9.0.3"
         },
         "runtime": {
@@ -22,6 +23,26 @@
           "lib/net7.0/Dapper.dll": {
             "assemblyVersion": "2.0.0.0",
             "fileVersion": "2.1.35.13827"
+          }
+        }
+      },
+      "MessagePack/2.5.187": {
+        "dependencies": {
+          "MessagePack.Annotations": "2.5.187",
+          "Microsoft.NET.StringTools": "17.6.3"
+        },
+        "runtime": {
+          "lib/net6.0/MessagePack.dll": {
+            "assemblyVersion": "2.5.0.0",
+            "fileVersion": "2.5.187.63700"
+          }
+        }
+      },
+      "MessagePack.Annotations/2.5.187": {
+        "runtime": {
+          "lib/netstandard2.0/MessagePack.Annotations.dll": {
+            "assemblyVersion": "2.5.0.0",
+            "fileVersion": "2.5.187.63700"
           }
         }
       },
@@ -44,6 +65,18 @@
           "lib/net10.0/Microsoft.AspNetCore.OpenApi.dll": {
             "assemblyVersion": "10.0.1.0",
             "fileVersion": "10.0.125.57005"
+          }
+        }
+      },
+      "Microsoft.AspNetCore.SignalR.StackExchangeRedis/10.0.7": {
+        "dependencies": {
+          "MessagePack": "2.5.187",
+          "StackExchange.Redis": "2.7.27"
+        },
+        "runtime": {
+          "lib/net10.0/Microsoft.AspNetCore.SignalR.StackExchangeRedis.dll": {
+            "assemblyVersion": "10.0.7.0",
+            "fileVersion": "10.0.726.21808"
           }
         }
       },
@@ -111,6 +144,14 @@
           }
         }
       },
+      "Microsoft.NET.StringTools/17.6.3": {
+        "runtime": {
+          "lib/net7.0/Microsoft.NET.StringTools.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "17.6.3.22601"
+          }
+        }
+      },
       "Microsoft.OpenApi/2.0.0": {
         "runtime": {
           "lib/net8.0/Microsoft.OpenApi.dll": {
@@ -124,6 +165,25 @@
           "lib/net8.0/Npgsql.dll": {
             "assemblyVersion": "9.0.3.0",
             "fileVersion": "9.0.3.0"
+          }
+        }
+      },
+      "Pipelines.Sockets.Unofficial/2.2.8": {
+        "runtime": {
+          "lib/net5.0/Pipelines.Sockets.Unofficial.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "2.2.8.1080"
+          }
+        }
+      },
+      "StackExchange.Redis/2.7.27": {
+        "dependencies": {
+          "Pipelines.Sockets.Unofficial": "2.2.8"
+        },
+        "runtime": {
+          "lib/net6.0/StackExchange.Redis.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.7.27.49176"
           }
         }
       },
@@ -154,6 +214,20 @@
       "path": "dapper/2.1.35",
       "hashPath": "dapper.2.1.35.nupkg.sha512"
     },
+    "MessagePack/2.5.187": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-uW4j8m4Nc+2Mk5n6arOChavJ9bLjkis0qWASOj2h2OwmfINuzYv+mjCHUymrYhmyyKTu3N+ObtTXAY4uQ7jIhg==",
+      "path": "messagepack/2.5.187",
+      "hashPath": "messagepack.2.5.187.nupkg.sha512"
+    },
+    "MessagePack.Annotations/2.5.187": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-/IvvMMS8opvlHjEJ/fR2Cal4Co726Kj77Z8KiohFhuHfLHHmb9uUxW5+tSCL4ToKFfkQlrS3HD638mRq83ySqA==",
+      "path": "messagepack.annotations/2.5.187",
+      "hashPath": "messagepack.annotations.2.5.187.nupkg.sha512"
+    },
     "Microsoft.AspNetCore.Authentication.JwtBearer/10.0.3": {
       "type": "package",
       "serviceable": true,
@@ -167,6 +241,13 @@
       "sha512": "sha512-gMY53EggRIFawhue66GanHcm1Tcd0+QzzMwnMl60LrEoJhGgzA9qAbLx6t/ON3hX4flc2NcEbTK1Z5GCLYHcwA==",
       "path": "microsoft.aspnetcore.openapi/10.0.1",
       "hashPath": "microsoft.aspnetcore.openapi.10.0.1.nupkg.sha512"
+    },
+    "Microsoft.AspNetCore.SignalR.StackExchangeRedis/10.0.7": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-b+Gazwfx+rQKRwUnPBAsuXnsg8T6hMSriIATAQ3AqR6HJP0UJZw0+Lcr2dFTDul0SSNnskK+UEkqZO78EMHSHw==",
+      "path": "microsoft.aspnetcore.signalr.stackexchangeredis/10.0.7",
+      "hashPath": "microsoft.aspnetcore.signalr.stackexchangeredis.10.0.7.nupkg.sha512"
     },
     "Microsoft.IdentityModel.Abstractions/8.0.1": {
       "type": "package",
@@ -210,6 +291,13 @@
       "path": "microsoft.identitymodel.tokens/8.0.1",
       "hashPath": "microsoft.identitymodel.tokens.8.0.1.nupkg.sha512"
     },
+    "Microsoft.NET.StringTools/17.6.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-N0ZIanl1QCgvUumEL1laasU0a7sOE5ZwLZVTn0pAePnfhq8P7SvTjF8Axq+CnavuQkmdQpGNXQ1efZtu5kDFbA==",
+      "path": "microsoft.net.stringtools/17.6.3",
+      "hashPath": "microsoft.net.stringtools.17.6.3.nupkg.sha512"
+    },
     "Microsoft.OpenApi/2.0.0": {
       "type": "package",
       "serviceable": true,
@@ -223,6 +311,20 @@
       "sha512": "sha512-tPvY61CxOAWxNsKLEBg+oR646X4Bc8UmyQ/tJszL/7mEmIXQnnBhVJZrZEEUv0Bstu0mEsHZD5At3EO8zQRAYw==",
       "path": "npgsql/9.0.3",
       "hashPath": "npgsql.9.0.3.nupkg.sha512"
+    },
+    "Pipelines.Sockets.Unofficial/2.2.8": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-zG2FApP5zxSx6OcdJQLbZDk2AVlN2BNQD6MorwIfV6gVj0RRxWPEp2LXAxqDGZqeNV1Zp0BNPcNaey/GXmTdvQ==",
+      "path": "pipelines.sockets.unofficial/2.2.8",
+      "hashPath": "pipelines.sockets.unofficial.2.2.8.nupkg.sha512"
+    },
+    "StackExchange.Redis/2.7.27": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Uqc2OQHglqj9/FfGQ6RkKFkZfHySfZlfmbCl+hc+u2I/IqunfelQ7QJi7ZhvAJxUtu80pildVX6NPLdDaUffOw==",
+      "path": "stackexchange.redis/2.7.27",
+      "hashPath": "stackexchange.redis.2.7.27.nupkg.sha512"
     },
     "System.IdentityModel.Tokens.Jwt/8.0.1": {
       "type": "package",

@@ -59,7 +59,11 @@ builder.Services.AddAuthentication("Bearer")
     });
 
 builder.Services.AddAuthorization();
-builder.Services.AddSignalR();
+
+var redisConn = builder.Configuration["Redis:ConnectionString"];
+var signalR = builder.Services.AddSignalR();
+if (!string.IsNullOrEmpty(redisConn))
+    signalR.AddStackExchangeRedis(redisConn);
 builder.Services.AddHostedService<OrdersBackgroundService>();
 builder.Services.AddHostedService<ProcessDataService>();
 

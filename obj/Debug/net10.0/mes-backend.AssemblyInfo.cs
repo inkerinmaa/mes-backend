@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("mes-backend")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+af0e87bab99ed1db06190fad3994ba08af6b6219")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6f9571f6b47ff37a836cfdb6a1a8edbeac5e3ec3")]
 [assembly: System.Reflection.AssemblyProductAttribute("mes-backend")]
 [assembly: System.Reflection.AssemblyTitleAttribute("mes-backend")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

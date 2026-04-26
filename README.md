@@ -2,7 +2,7 @@
 
 .NET 10 minimal API backend for the MES (Manufacturing Execution System) dashboard. Provides REST endpoints with JWT authentication (Keycloak), real-time push via SignalR, and persistent storage in PostgreSQL.
 
-## Quick start
+## Quick start (local dev)
 
 ```bash
 # Prerequisites: .NET 10 SDK, Docker (PostgreSQL), Keycloak on port 8080
@@ -15,6 +15,21 @@ dotnet run
 ```
 
 Nginx proxies `https://mes.test.local/api/*` and `/hubs/*` to `localhost:5000`.
+
+In local dev, `Redis:ConnectionString` is empty in `appsettings.json`, so SignalR runs in-memory (single process — fine for dev).
+
+## Docker deployment
+
+See `docker-compose.yml` and `.env.example` in the project root (`~/projects/`).
+
+```bash
+cd ~/projects
+cp .env.example .env
+# Edit .env with real values
+docker compose up -d --build
+```
+
+The backend image is built from `mes-backend/Dockerfile` (multi-stage: SDK build → ASP.NET runtime). All configuration is passed through environment variables which override `appsettings.json` values using .NET's double-underscore convention (`Redis__ConnectionString` → `Redis:ConnectionString`).
 
 ## Architecture
 
@@ -224,6 +239,38 @@ JWT passed as `?access_token=` query param.
 | `ProcessDataUpdated` | Every 3 s | `{ timestamp, temperature, pressure, cycleTime, machineState }` |
 | `MachineStateUpdated` | New `machine_states` row | `{ lineId }` |
 | `AlertsUpdated` | Every log write | (no payload) — clients re-fetch `/api/notifications` |
+
+### Redis SignalR backplane
+
+Without Redis, SignalR state is in-memory per process. With a single backend instance this is fine. With multiple instances (Docker replicas, k8s pods), a browser connected to instance A won't receive events broadcast by instance B.
+
+**How the backplane works:**
+
+```
+Browser ──WS──► Instance A
+Browser ──WS──► Instance B
+
+ProcessDataService (on Instance B) calls:
+  hub.Clients.All.SendAsync("StatsUpdated", data)
+      │
+      ▼
+  StackExchange.Redis publishes to Redis channel "signalr:mes-backend"
+      │
+      ├──► Instance A subscribes → pushes to its connected browsers
+      └──► Instance B pushes to its own connected browsers
+```
+
+Every backend instance subscribes to the same Redis Pub/Sub channels. A broadcast on any instance fans out through Redis to all instances, which then each push to their local WebSocket connections.
+
+Configured in `Program.cs`:
+```csharp
+var redisConn = builder.Configuration["Redis:ConnectionString"];
+var signalR = builder.Services.AddSignalR();
+if (!string.IsNullOrEmpty(redisConn))
+    signalR.AddStackExchangeRedis(redisConn);
+```
+
+When `Redis:ConnectionString` is empty (local dev), SignalR falls back to in-memory — no Redis needed for a single process.
 
 ## Deploying with a different Keycloak
 

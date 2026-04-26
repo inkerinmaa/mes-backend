@@ -1,20 +1,26 @@
 {
   "version": 2,
-  "dgSpecHash": "f2c5JweS2Io=",
+  "dgSpecHash": "iCP02uCB/8g=",
   "success": true,
   "projectFilePath": "/home/nik/projects/mes-backend/mes-backend.csproj",
   "expectedPackageFiles": [
     "/home/nik/.nuget/packages/dapper/2.1.35/dapper.2.1.35.nupkg.sha512",
+    "/home/nik/.nuget/packages/messagepack/2.5.187/messagepack.2.5.187.nupkg.sha512",
+    "/home/nik/.nuget/packages/messagepack.annotations/2.5.187/messagepack.annotations.2.5.187.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.aspnetcore.authentication.jwtbearer/10.0.3/microsoft.aspnetcore.authentication.jwtbearer.10.0.3.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.aspnetcore.openapi/10.0.1/microsoft.aspnetcore.openapi.10.0.1.nupkg.sha512",
+    "/home/nik/.nuget/packages/microsoft.aspnetcore.signalr.stackexchangeredis/10.0.7/microsoft.aspnetcore.signalr.stackexchangeredis.10.0.7.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.abstractions/8.0.1/microsoft.identitymodel.abstractions.8.0.1.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.jsonwebtokens/8.0.1/microsoft.identitymodel.jsonwebtokens.8.0.1.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.logging/8.0.1/microsoft.identitymodel.logging.8.0.1.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.protocols/8.0.1/microsoft.identitymodel.protocols.8.0.1.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.protocols.openidconnect/8.0.1/microsoft.identitymodel.protocols.openidconnect.8.0.1.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.identitymodel.tokens/8.0.1/microsoft.identitymodel.tokens.8.0.1.nupkg.sha512",
+    "/home/nik/.nuget/packages/microsoft.net.stringtools/17.6.3/microsoft.net.stringtools.17.6.3.nupkg.sha512",
     "/home/nik/.nuget/packages/microsoft.openapi/2.0.0/microsoft.openapi.2.0.0.nupkg.sha512",
     "/home/nik/.nuget/packages/npgsql/9.0.3/npgsql.9.0.3.nupkg.sha512",
+    "/home/nik/.nuget/packages/pipelines.sockets.unofficial/2.2.8/pipelines.sockets.unofficial.2.2.8.nupkg.sha512",
+    "/home/nik/.nuget/packages/stackexchange.redis/2.7.27/stackexchange.redis.2.7.27.nupkg.sha512",
     "/home/nik/.nuget/packages/system.identitymodel.tokens.jwt/8.0.1/system.identitymodel.tokens.jwt.8.0.1.nupkg.sha512"
   ],
   "logs": []

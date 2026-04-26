@@ -1,0 +1,5 @@
+bin/
+obj/
+.git/
+*.md
+appsettings.Development.json

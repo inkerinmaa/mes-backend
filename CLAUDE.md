@@ -11,7 +11,9 @@
 - Run dev: `dotnet run`
 - Build: `dotnet build`
 - Restore packages: `dotnet restore`
-- HTTP smoke tests: open `MyDashboardApi.http` in VS Code REST Client (file kept as-is; filename doesn't affect functionality)
+- HTTP smoke tests: open `MyDashboardApi.http` in VS Code REST Client
+- Docker image: `docker build -t mes-backend .` (from `mes-backend/`)
+- Full stack: `docker compose up -d --build` (from `~/projects/`)
 
 ## Architecture
 - `Program.cs` — DI setup, middleware pipeline, endpoint mapping
@@ -151,6 +153,21 @@ if (role != "admin") return Results.Forbid();
 - No signup flow — users are created in Keycloak and provisioned automatically on first login via `POST /api/me`.
 - First user to ever log in gets `admin`; all subsequent new users get `viewer`.
 - Role can be changed via `PATCH /api/users/{id}/role` (admin only) or directly in DB.
+
+## Docker & configuration
+
+All `appsettings.json` values can be overridden by environment variables using .NET's double-underscore convention:
+
+| appsettings.json key | Environment variable |
+|----------------------|----------------------|
+| `ConnectionStrings:Postgres` | `ConnectionStrings__Postgres` |
+| `Authentication:Authority` | `Authentication__Authority` |
+| `Authentication:BackchannelAuthority` | `Authentication__BackchannelAuthority` |
+| `Authentication:Audience` | `Authentication__Audience` |
+| `Redis:ConnectionString` | `Redis__ConnectionString` |
+
+`Redis:ConnectionString` empty → SignalR in-memory (single instance, dev).
+`Redis:ConnectionString = redis:6379` → Redis backplane active (multi-instance, prod).
 
 ## Rules
 - All route handlers live in `Endpoints/`, not in `Program.cs`

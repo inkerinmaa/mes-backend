@@ -42,3 +42,9 @@
 /home/nik/projects/mes-backend/obj/Debug/net10.0/mes-backend.pdb
 /home/nik/projects/mes-backend/obj/Debug/net10.0/mes-backend.genruntimeconfig.cache
 /home/nik/projects/mes-backend/obj/Debug/net10.0/ref/mes-backend.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/MessagePack.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/MessagePack.Annotations.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/Microsoft.AspNetCore.SignalR.StackExchangeRedis.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/Microsoft.NET.StringTools.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/Pipelines.Sockets.Unofficial.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/StackExchange.Redis.dll
