@@ -12,4 +12,5 @@ public interface IOrderRepository
     Task<bool> UpdateCagePackagesAsync(int cageId, int packages);
     Task<bool> UpdateOrderCommentAsync(int orderId, string? comment);
     Task<bool> DeleteCageAsync(int cageId);
+    Task<(bool Success, string? Error)> TransitionStatusAsync(int orderId, string action, string username);
 }

@@ -1,15 +1,17 @@
 using Dapper;
 using Npgsql;
+using Microsoft.AspNetCore.SignalR;
+using MyDashboardApi.Hubs;
 
 namespace MyDashboardApi.Services;
 
-public sealed class DbLoggerProvider(NpgsqlDataSource dataSource) : ILoggerProvider
+public sealed class DbLoggerProvider(NpgsqlDataSource dataSource, IServiceProvider services) : ILoggerProvider
 {
-    public ILogger CreateLogger(string categoryName) => new DbLogger(dataSource, categoryName);
+    public ILogger CreateLogger(string categoryName) => new DbLogger(dataSource, services, categoryName);
     public void Dispose() { }
 }
 
-public sealed class DbLogger(NpgsqlDataSource dataSource, string categoryName) : ILogger
+public sealed class DbLogger(NpgsqlDataSource dataSource, IServiceProvider services, string categoryName) : ILogger
 {
     private static readonly string[] _ignoredPrefixes =
         ["Microsoft.", "System.", "Npgsql.", "Grpc.", "OpenTelemetry."];
@@ -57,6 +59,11 @@ public sealed class DbLogger(NpgsqlDataSource dataSource, string categoryName) :
             await conn.ExecuteAsync(
                 "INSERT INTO logs (type, level, message) VALUES (@type, @level, @message)",
                 new { type, level, message });
+
+            // Notify all connected clients that new alert data is available
+            var hub = services.GetService<IHubContext<DashboardHub>>();
+            if (hub != null)
+                await hub.Clients.All.SendAsync("AlertsUpdated");
         }
         catch { /* Must not throw — would cause infinite recursion */ }
     }

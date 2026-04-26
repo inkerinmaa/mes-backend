@@ -1,3 +1,4 @@
+using MyDashboardApi.Database.Repositories;
 using MyDashboardApi.Models;
 
 namespace MyDashboardApi.Endpoints;
@@ -8,38 +9,57 @@ public static class NotificationEndpoints
     {
         var group = app.MapGroup("/api").RequireAuthorization();
 
-        group.MapGet("/notifications", GetNotifications).WithName("GetNotifications");
+        group.MapGet("/notifications", GetAlerts).WithName("GetAlerts");
+        group.MapPost("/notifications/ack", AckAlerts).WithName("AckAlerts");
+        group.MapGet("/me/notification-prefs", GetNotificationPrefs).WithName("GetNotificationPrefs");
+        group.MapPut("/me/notification-prefs", SaveNotificationPrefs).WithName("SaveNotificationPrefs");
 
         return app;
     }
 
-    private static Notification[] GetNotifications()
+    private static async Task<IResult> GetAlerts(
+        IUserRepository users, ILogRepository logs, HttpContext ctx)
     {
-        var senders = new[]
-        {
-            new NotificationSender(201, "Line 1 Monitor", "line1@mes.local", new Avatar("https://i.pravatar.cc/150?u=line1", "Line 1"), "active", "Production Floor"),
-            new NotificationSender(202, "Line 2 Monitor", "line2@mes.local", new Avatar("https://i.pravatar.cc/150?u=line2", "Line 2"), "active", "Production Floor"),
-            new NotificationSender(203, "Line 3 Monitor", "line3@mes.local", new Avatar("https://i.pravatar.cc/150?u=line3", "Line 3"), "active", "Production Floor")
-        };
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (userId, _) = await users.GetUserContextAsync(keycloakId);
+        if (userId == null) return Results.Ok(Array.Empty<LogEntry>());
 
-        var bodies = new[]
-        {
-            "Temperature exceeded 85\u00b0C on Line 1 extruder zone 3.",
-            "Pressure dropped below 13 PSI on Line 2 hydraulic system.",
-            "Cycle time anomaly detected on Line 3 \u2014 15% above target.",
-            "Motor vibration warning on Line 1 main drive.",
-            "Conveyor belt speed deviation on Line 2 \u2014 automatic correction applied."
-        };
+        var prefs   = await users.GetNotificationPrefsAsync(userId.Value);
+        var since   = await users.GetLastAlertAckAtAsync(userId.Value);
+        var enabled = prefs.Where(p => p.Enabled).Select(p => p.LogType);
 
-        var now = DateTime.UtcNow;
+        return Results.Ok(await logs.GetAlertLogsAsync(enabled, since));
+    }
 
-        return Enumerable.Range(1, 5).Select(i => new Notification(
-            Id: i,
-            Unread: i <= 2,
-            Sender: senders[Random.Shared.Next(senders.Length)],
-            Body: bodies[i - 1],
-            Date: now.AddMinutes(-Random.Shared.Next(5, 120)).ToString("o")))
-            .OrderByDescending(n => n.Date)
-            .ToArray();
+    private static async Task<IResult> AckAlerts(
+        IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (userId, _) = await users.GetUserContextAsync(keycloakId);
+        if (userId == null) return Results.NotFound(new { error = "User not found" });
+
+        await users.AckAlertsAsync(userId.Value);
+        return Results.Ok();
+    }
+
+    private static async Task<IResult> GetNotificationPrefs(
+        IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (userId, _) = await users.GetUserContextAsync(keycloakId);
+        if (userId == null) return Results.NotFound(new { error = "User not found" });
+
+        return Results.Ok(await users.GetNotificationPrefsAsync(userId.Value));
+    }
+
+    private static async Task<IResult> SaveNotificationPrefs(
+        UpdateNotificationPrefsRequest req, IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (userId, _) = await users.GetUserContextAsync(keycloakId);
+        if (userId == null) return Results.NotFound(new { error = "User not found" });
+
+        await users.SaveNotificationPrefsAsync(userId.Value, req.Prefs);
+        return Results.Ok(await users.GetNotificationPrefsAsync(userId.Value));
     }
 }

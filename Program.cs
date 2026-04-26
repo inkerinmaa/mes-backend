@@ -72,7 +72,8 @@ builder.Services.AddSingleton<ISkuRepository, SkuRepository>();
 builder.Services.AddSingleton<IUomRepository, UomRepository>();
 builder.Services.AddSingleton<ILogRepository, LogRepository>();
 builder.Services.AddSingleton<IMachineStateRepository, MachineStateRepository>();
-builder.Logging.AddProvider(new DbLoggerProvider(Npgsql.NpgsqlDataSource.Create(connStr)));
+builder.Services.AddSingleton<ISettingsRepository, SettingsRepository>();
+builder.Logging.Services.AddSingleton<ILoggerProvider, DbLoggerProvider>();
 
 var app = builder.Build();
 
@@ -109,6 +110,7 @@ app.Use(async (ctx, next) =>
 });
 
 app.MapDashboardEndpoints();
+app.MapSettingsEndpoints();
 app.MapMachineStateEndpoints();
 app.MapOrderEndpoints();
 app.MapSkuEndpoints();

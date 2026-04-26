@@ -47,7 +47,7 @@ The API does not initialize or migrate the schema on startup.
 | `skus` | `code`, `name`, `description`, `unit` | Product SKU catalogue |
 | `production_lines` | `id` (1–3), `name`, `status` | Fixed 3 lines |
 | `materials` | `code`, `name`, `unit`, `stock_quantity` | Raw material inventory |
-| `orders` | `order_number`, `sku_id`, `production_line_id`, `volume`, `uom_id`, `status`, `priority`, `due_date`, `comment`, `cage`, `cage_size`, `created_by_id`, `created_at`, `updated_at` | `cage=true` enables cage tracking; `cage_size` is packages-per-cage set at creation |
+| `orders` | `order_number`, `sku_id`, `production_line_id`, `volume`, `uom_id`, `status`, `priority`, `due_date`, `start_at`, `finish_at`, `comment`, `cage`, `cage_size`, `created_by_id`, `created_at`, `updated_at` | Status: `created`→`running`→`paused`→`running`→`completed`/`cancelled`. `start_at`/`finish_at` are planned times set at creation. `cage=true` enables cage tracking. |
 | `cages` | `order_number`, `cage_guid`, `cage_size`, `packages`, `scanned_at`, `scanned_by_id` | One row per QR scan; `cage_size` copied from order at scan time; only `packages` is editable after |
 | `machine_states` | `production_line_id`, `state` (running/warning/stopped), `ts` | Append-only event log: one row per state change. Duration is computed dynamically as `LEAD(ts) OVER (...) - ts`; the active segment uses `NOW() - ts`. |
 | `logs` | `type` (USER/PROCESS/APP/EQUIPMENT/INTEGRATION), `message`, `level` (DEBUG/INFO/WARNING/ERROR/CRITICAL), `ts` | Structured event log; written automatically by `DbLoggerProvider` for all `MyDashboardApi.*` log lines ≥ INFO |
@@ -64,7 +64,8 @@ The API does not initialize or migrate the schema on startup.
 | GET | `/api/logs?type=&level=&limit=` | Filtered log entries from `logs` table |
 | GET | `/api/orders` | All non-cancelled orders (with produced_packages) |
 | POST | `/api/orders` | Create a new work order |
-| DELETE | `/api/orders/{id}` | Cancel an order (admin only) |
+| DELETE | `/api/orders/{id}` | Cancel an order (admin only; any non-terminal state) |
+| PATCH | `/api/orders/{id}/status` | Transition order state `{ action: "start" \| "stop" }` — see state machine below |
 | GET | `/api/orders/{id}` | Order detail with cage list |
 | POST | `/api/orders/{id}/cages` | Scan cage QR code (`{ qrData: "{order_number}|{uuid}" }`) |
 | PATCH | `/api/orders/{id}/cages/{cageId}/packages` | Update packages count for a cage |
@@ -85,6 +86,23 @@ The API does not initialize or migrate the schema on startup.
 - `MachineStateUpdated` — on every new `machine_states` row, `{ lineId }`. Sent by `ProcessDataService` (simulation, ~30 s) and by `POST /api/machine-states` (real machine events). Frontend re-fetches the timeline only for the affected line.
 
 ## Key implementation details
+
+### Order state machine
+
+```
+created ──[Start]──► running ──[Stop]──► paused
+   │                    │                  │
+   └──[Cancel]──►  cancelled ◄──[Cancel]───┘
+                                running ──[Cancel]──► cancelled
+completed  (terminal — no transitions out)
+cancelled  (terminal — no transitions out)
+```
+
+- `start` action: `created` or `paused` → `running`
+- `stop` action: `running` → `paused`
+- Cancel (`DELETE /api/orders/{id}`): any state except `completed`/`cancelled`
+- `start_at` / `finish_at` are **planned** times set at order creation by the planning department; they drive the queue sequence but are not updated by state transitions.
+- Sequence label (computed in SQL, not frontend): `running`→"In Process"; `created`/`paused` sorted by `start_at` → "Next", "Next+1", "Next+2", …; `completed`→"Completed"; `cancelled`→"Cancelled".
 
 ### Cage QR format
 QR code encodes `{order_number}|{uuid}`. The `ScanCage` endpoint parses the pipe-separated string, validates the order number matches the route param, then inserts into `cages` with `cage_size` and `packages` both set to the order's `cage_size`.
@@ -108,6 +126,31 @@ Registered as `ILoggerProvider`. Intercepts all log calls where the category sta
 - **Authority** — must match the `iss` claim in the JWT
 - **BackchannelAuthority** — internal Keycloak endpoint for JWKS (avoids DNS/SSL in WSL)
 - **Audience** — must match the `aud` claim (requires Keycloak audience mapper)
+
+## Role enforcement
+
+Two roles: `admin` and `viewer`. Checked server-side via `IUserRepository.GetUserContextAsync`.
+
+| Endpoint group | Admin required |
+|----------------|---------------|
+| `POST /api/orders` | ✓ |
+| `DELETE /api/orders/{id}` | ✓ |
+| `PATCH /api/orders/{id}/status` | ✓ |
+| `PATCH /api/settings/{key}` | ✓ |
+| `PATCH /api/users/{id}/role` | ✓ |
+| Everything else | ✗ (any authenticated user) |
+
+Pattern for admin-only endpoints:
+```csharp
+var (_, role) = await users.GetUserContextAsync(keycloakId);
+if (role != "admin") return Results.Forbid();
+```
+
+## User provisioning
+
+- No signup flow — users are created in Keycloak and provisioned automatically on first login via `POST /api/me`.
+- First user to ever log in gets `admin`; all subsequent new users get `viewer`.
+- Role can be changed via `PATCH /api/users/{id}/role` (admin only) or directly in DB.
 
 ## Rules
 - All route handlers live in `Endpoints/`, not in `Program.cs`

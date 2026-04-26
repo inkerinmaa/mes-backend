@@ -99,4 +99,46 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
 
         logger.LogInformation("Display name updated for {KeycloakId}: {FullName}", keycloakId, fullName);
     }
+
+    public async Task<IEnumerable<UserNotificationPref>> GetNotificationPrefsAsync(int userId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.QueryAsync<UserNotificationPref>("""
+            SELECT all_types.log_type, COALESCE(unp.enabled, true) AS enabled
+            FROM (VALUES ('USER'), ('PROCESS'), ('APP'), ('EQUIPMENT'), ('INTEGRATION')) AS all_types(log_type)
+            LEFT JOIN user_notification_prefs unp
+                ON unp.log_type = all_types.log_type AND unp.user_id = @userId
+            """,
+            new { userId });
+    }
+
+    public async Task<DateTime?> GetLastAlertAckAtAsync(int userId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteScalarAsync<DateTime?>(
+            "SELECT last_alert_ack_at FROM users WHERE id = @userId",
+            new { userId });
+    }
+
+    public async Task AckAlertsAsync(int userId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET last_alert_ack_at = NOW() WHERE id = @userId",
+            new { userId });
+    }
+
+    public async Task SaveNotificationPrefsAsync(int userId, IEnumerable<UserNotificationPref> prefs)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        foreach (var pref in prefs)
+        {
+            await conn.ExecuteAsync("""
+                INSERT INTO user_notification_prefs (user_id, log_type, enabled)
+                VALUES (@userId, @logType, @enabled)
+                ON CONFLICT (user_id, log_type) DO UPDATE SET enabled = EXCLUDED.enabled
+                """,
+                new { userId, logType = pref.LogType, enabled = pref.Enabled });
+        }
+    }
 }

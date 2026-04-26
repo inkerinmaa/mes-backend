@@ -11,43 +11,54 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
     {
         await using var conn = await dataSource.OpenConnectionAsync();
         return await conn.QueryAsync<Order>("""
+            WITH active_ranked AS (
+                SELECT id,
+                    ROW_NUMBER() OVER (ORDER BY planned_start_at NULLS LAST, created_at) AS queue_pos
+                FROM orders
+                WHERE status IN ('created', 'paused')
+            )
             SELECT
-                id,
-                order_number,
-                sku,
-                priority,
-                volume,
-                uom_code,
-                line,
-                due_date,
-                CASE rn
-                    WHEN 1 THEN 'In Progress'
-                    WHEN 2 THEN 'Next'
-                    ELSE 'Next+' || (rn - 2)::text
-                END AS sequence,
-                cage,
-                produced_packages,
-                comment
-            FROM (
-                SELECT
-                    o.id,
-                    o.order_number,
-                    s.code              AS sku,
-                    o.priority,
-                    o.volume,
-                    u.code              AS uom_code,
-                    o.production_line_id AS line,
-                    COALESCE(o.due_date::text, '') AS due_date,
-                    o.cage,
-                    COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)::int AS produced_packages,
-                    o.comment,
-                    ROW_NUMBER() OVER (ORDER BY o.created_at) AS rn
-                FROM orders o
-                JOIN skus s ON s.id = o.sku_id
-                LEFT JOIN uom u ON u.id = o.uom_id
-                WHERE o.status != 'cancelled'
-            ) sub
-            ORDER BY rn
+                o.id,
+                o.order_number,
+                s.code               AS sku,
+                o.status,
+                o.priority,
+                o.volume,
+                u.code               AS uom_code,
+                o.production_line_id AS line,
+                COALESCE(o.due_date::text,      '') AS due_date,
+                o.planned_start_at::text            AS planned_start_at,
+                o.planned_complete_at::text         AS planned_complete_at,
+                o.start_at::text                    AS start_at,
+                o.complete_at::text                 AS complete_at,
+                o.cage,
+                COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)::int AS produced_packages,
+                o.comment,
+                CASE o.status
+                    WHEN 'running'   THEN 'In Process'
+                    WHEN 'completed' THEN 'Completed'
+                    WHEN 'cancelled' THEN 'Cancelled'
+                    ELSE
+                        CASE ar.queue_pos
+                            WHEN 1 THEN 'Next'
+                            ELSE 'Next+' || (ar.queue_pos - 1)::text
+                        END
+                END AS sequence
+            FROM orders o
+            JOIN skus s ON s.id = o.sku_id
+            LEFT JOIN uom u ON u.id = o.uom_id
+            LEFT JOIN active_ranked ar ON ar.id = o.id
+            ORDER BY
+                CASE o.status
+                    WHEN 'running'   THEN 0
+                    WHEN 'created'   THEN 1
+                    WHEN 'paused'    THEN 1
+                    WHEN 'completed' THEN 2
+                    WHEN 'cancelled' THEN 3
+                    ELSE 4
+                END,
+                o.planned_start_at NULLS LAST,
+                o.created_at
             """);
     }
 
@@ -56,25 +67,33 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         await using var conn = await dataSource.OpenConnectionAsync();
         var order = await conn.QuerySingleAsync<Order>("""
             WITH inserted AS (
-                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, cage, cage_size, created_by_id)
-                SELECT @orderNumber, s.id, @lineId, @volume, u.id, @priority, @dueDate::date, @cage, @cageSize, @userId
+                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, created_by_id)
+                SELECT @orderNumber, s.id, @lineId, @volume, u.id, @priority,
+                       @dueDate::date, @plannedStartAt::timestamptz, @plannedCompleteAt::timestamptz,
+                       @cage, @cageSize, @userId
                 FROM skus s, uom u
                 WHERE s.code = @skuCode AND u.code = @uomCode
-                RETURNING id, order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, cage, cage_size, comment
+                RETURNING id, order_number, sku_id, production_line_id, volume, uom_id,
+                          status, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, comment
             )
             SELECT
                 i.id,
                 i.order_number,
-                s.code              AS sku,
+                s.code               AS sku,
+                i.status,
                 i.priority,
                 i.volume,
-                u.code              AS uom_code,
+                u.code               AS uom_code,
                 i.production_line_id AS line,
-                COALESCE(i.due_date::text, '') AS due_date,
-                'Queued'            AS sequence,
+                COALESCE(i.due_date::text,          '') AS due_date,
+                i.planned_start_at::text                AS planned_start_at,
+                i.planned_complete_at::text             AS planned_complete_at,
+                NULL::text                              AS start_at,
+                NULL::text                              AS complete_at,
+                'Next'               AS sequence,
                 i.cage,
                 i.cage_size,
-                0                   AS produced_packages,
+                0                    AS produced_packages,
                 i.comment
             FROM inserted i
             JOIN skus s ON s.id = i.sku_id
@@ -82,16 +101,18 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
             """,
             new
             {
-                orderNumber = req.OrderNumber,
-                skuCode     = req.SkuCode,
-                lineId      = req.LineId,
-                volume      = req.Volume,
-                uomCode     = req.UomCode,
-                priority    = req.Priority,
-                dueDate     = string.IsNullOrEmpty(req.DueDate) ? null : req.DueDate,
-                cage        = req.Cage,
-                cageSize    = req.Cage ? req.CageSize : 50,
-                userId      = (object?)userId
+                orderNumber      = req.OrderNumber,
+                skuCode          = req.SkuCode,
+                lineId           = req.LineId,
+                volume           = req.Volume,
+                uomCode          = req.UomCode,
+                priority         = req.Priority,
+                dueDate          = string.IsNullOrEmpty(req.DueDate)          ? null : req.DueDate,
+                plannedStartAt   = string.IsNullOrEmpty(req.PlannedStartAt)   ? null : req.PlannedStartAt,
+                plannedCompleteAt = string.IsNullOrEmpty(req.PlannedCompleteAt) ? null : req.PlannedCompleteAt,
+                cage             = req.Cage,
+                cageSize         = req.Cage ? req.CageSize : 50,
+                userId           = (object?)userId
             });
 
         logger.LogInformation(
@@ -106,7 +127,7 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         await using var conn = await dataSource.OpenConnectionAsync();
         var orderNumber = await conn.ExecuteScalarAsync<string?>("""
             UPDATE orders SET status = 'cancelled', updated_at = NOW()
-            WHERE id = @orderId AND status != 'cancelled'
+            WHERE id = @orderId AND status NOT IN ('completed', 'cancelled')
             RETURNING order_number
             """,
             new { orderId });
@@ -115,6 +136,56 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
             logger.LogInformation("Order cancelled: #{OrderNumber} (id={Id}) by {User}", orderNumber, orderId, cancelledBy);
 
         return orderNumber != null;
+    }
+
+    public async Task<(bool Success, string? Error)> TransitionStatusAsync(int orderId, string action, string username)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        string[] fromStates;
+        string toStatus;
+        string extraSet;
+
+        switch (action)
+        {
+            case "start":
+                fromStates = ["created", "paused"];
+                toStatus   = "running";
+                extraSet   = ", start_at = COALESCE(start_at, NOW())";
+                break;
+            case "pause":
+                fromStates = ["running"];
+                toStatus   = "paused";
+                extraSet   = "";
+                break;
+            case "complete":
+                fromStates = ["running"];
+                toStatus   = "completed";
+                extraSet   = ", complete_at = NOW()";
+                break;
+            default:
+                return (false, $"Unknown action '{action}'. Use 'start', 'pause', or 'complete'.");
+        }
+
+        var orderNumber = await conn.ExecuteScalarAsync<string?>(
+            $"""
+            UPDATE orders SET status = @toStatus, updated_at = NOW(){extraSet}
+            WHERE id = @orderId AND status = ANY(@fromStates)
+            RETURNING order_number
+            """,
+            new { orderId, toStatus, fromStates });
+
+        if (orderNumber == null)
+        {
+            var current = await conn.ExecuteScalarAsync<string?>(
+                "SELECT status FROM orders WHERE id = @orderId", new { orderId });
+            if (current == null) return (false, "Order not found");
+            return (false, $"Cannot '{action}' an order in '{current}' state");
+        }
+
+        logger.LogInformation("Order {Action}: #{OrderNumber} (id={Id}) by {User}",
+            action, orderNumber, orderId, username);
+        return (true, null);
     }
 
     public async Task<OrderDetail?> GetOrderDetailAsync(int orderId)
@@ -133,6 +204,10 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                 o.production_line_id AS line,
                 COALESCE(o.due_date::text, '') AS due_date,
                 o.status,
+                o.planned_start_at::text   AS planned_start_at,
+                o.planned_complete_at::text AS planned_complete_at,
+                o.start_at::text           AS start_at,
+                o.complete_at::text        AS complete_at,
                 o.cage,
                 o.cage_size,
                 o.comment,

@@ -17,6 +17,7 @@ public static class OrderEndpoints
         group.MapPatch("/orders/{id:int}/cages/{cageId:int}/packages", UpdateCagePackages).WithName("UpdateCagePackages");
         group.MapDelete("/orders/{id:int}/cages/{cageId:int}", DeleteCage).WithName("DeleteCage");
         group.MapPatch("/orders/{id:int}/comment", UpdateComment).WithName("UpdateComment");
+        group.MapPatch("/orders/{id:int}/status", TransitionStatus).WithName("TransitionOrderStatus");
         return app;
     }
 
@@ -85,22 +86,34 @@ public static class OrderEndpoints
         // QR format: {order_number}|{uuid}
         var pipeIdx = req.QrData.LastIndexOf('|');
         if (pipeIdx < 0)
+        {
+            logger.LogWarning("ScanCage: invalid QR format for order {Id} — no pipe separator. Raw: {Raw}", id, req.QrData);
             return Results.BadRequest(new { error = "Invalid QR format. Expected: {order_number}|{uuid}" });
+        }
 
         var qrOrderNumber = req.QrData[..pipeIdx];
         var qrGuid        = req.QrData[(pipeIdx + 1)..];
 
         if (!Guid.TryParse(qrGuid, out _))
+        {
+            logger.LogWarning("ScanCage: invalid GUID '{Guid}' for order {Id}", qrGuid, id);
             return Results.BadRequest(new { error = "Invalid cage GUID in QR code" });
+        }
 
         var detail = await orders.GetOrderDetailAsync(id);
         if (detail is null) return Results.NotFound(new { error = "Order not found" });
 
         if (!detail.Cage)
+        {
+            logger.LogWarning("ScanCage: order {Id} ({OrderNumber}) does not have cage tracking enabled", id, detail.OrderNumber);
             return Results.BadRequest(new { error = "This order does not use cage tracking" });
+        }
 
         if (!string.Equals(detail.OrderNumber, qrOrderNumber, StringComparison.OrdinalIgnoreCase))
-            return Results.BadRequest(new { error = $"QR code belongs to order {qrOrderNumber}, not {detail.OrderNumber}" });
+        {
+            logger.LogWarning("ScanCage: order number mismatch — QR has '{QrOrder}', route id {Id} is '{ActualOrder}'", qrOrderNumber, id, detail.OrderNumber);
+            return Results.BadRequest(new { error = $"QR code belongs to order '{qrOrderNumber}', not '{detail.OrderNumber}'" });
+        }
 
         var cage = await orders.ScanCageAsync(detail.OrderNumber, qrGuid, detail.CageSize, userId);
         if (cage is null)
@@ -131,5 +144,28 @@ public static class OrderEndpoints
     {
         var updated = await orders.UpdateOrderCommentAsync(id, req.Comment);
         return updated ? Results.Ok(new { id, comment = req.Comment }) : Results.NotFound(new { error = "Order not found" });
+    }
+
+    private static async Task<IResult> TransitionStatus(
+        int id, TransitionStatusRequest req, IOrderRepository orders,
+        IUserRepository users, HttpContext ctx, ILogger<Program> logger)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var username   = ctx.User.FindFirst("preferred_username")?.Value ?? keycloakId;
+
+        var (_, role) = await users.GetUserContextAsync(keycloakId);
+        if (role != "admin")
+        {
+            logger.LogWarning("Unauthorized status transition attempt on order {Id} by {Username}", id, username);
+            return Results.Forbid();
+        }
+
+        var (success, error) = await orders.TransitionStatusAsync(id, req.Action, username);
+        if (!success)
+        {
+            logger.LogWarning("Status transition failed for order {Id}: {Error}", id, error);
+            return Results.BadRequest(new { error });
+        }
+        return Results.Ok(new { id, action = req.Action });
     }
 }

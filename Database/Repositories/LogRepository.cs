@@ -31,4 +31,20 @@ public class LogRepository(NpgsqlDataSource dataSource) : ILogRepository
             """,
             new { type, level, limit });
     }
+
+    public async Task<IEnumerable<LogEntry>> GetAlertLogsAsync(IEnumerable<string> enabledTypes, DateTime? since, int limit = 30)
+    {
+        var types = enabledTypes.ToArray();
+        if (types.Length == 0) return [];
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.QueryAsync<LogEntry>("""
+            SELECT id, type, message, level, ts::text AS ts
+            FROM logs
+            WHERE type = ANY(@types)
+              AND (@since::timestamptz IS NULL OR ts > @since)
+            ORDER BY ts DESC
+            LIMIT @limit
+            """,
+            new { types, since, limit });
+    }
 }
