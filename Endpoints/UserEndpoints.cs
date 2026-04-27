@@ -26,8 +26,9 @@ public static class UserEndpoints
         var username = ctx.User.FindFirst("preferred_username")?.Value ?? "";
         var fullName = ctx.User.FindFirst("name")?.Value
             ?? $"{ctx.User.FindFirst("given_name")?.Value} {ctx.User.FindFirst("family_name")?.Value}".Trim();
+        var groups   = ctx.User.Claims.Where(c => c.Type == "groups").Select(c => c.Value);
 
-        var (id, role, dbFullName) = await users.UpsertUserAsync(keycloakId, email, username, fullName);
+        var (id, role, dbFullName) = await users.UpsertUserAsync(keycloakId, email, username, fullName, groups);
         // Return full_name from the DB — user may have edited it via settings, and
         // the ON CONFLICT clause does not overwrite full_name on subsequent logins.
         return Results.Ok(new { id, email, username, fullName = dbFullName, role });

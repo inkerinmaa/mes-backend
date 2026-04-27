@@ -33,6 +33,11 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                 o.complete_at::text                 AS complete_at,
                 o.cage,
                 COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)::int AS produced_packages,
+                o.produced_volume,
+                CASE WHEN u.code = 'pkg'
+                     THEN COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)
+                     ELSE o.pkg_produced
+                END::int AS pkg_produced,
                 o.comment,
                 CASE o.status
                     WHEN 'running'   THEN 'In Process'
@@ -67,14 +72,21 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         await using var conn = await dataSource.OpenConnectionAsync();
         var order = await conn.QuerySingleAsync<Order>("""
             WITH inserted AS (
-                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, created_by_id)
+                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, created_by_id)
                 SELECT @orderNumber, s.id, @lineId, @volume, u.id, @priority,
                        @dueDate::date, @plannedStartAt::timestamptz, @plannedCompleteAt::timestamptz,
-                       @cage, @cageSize, @userId
+                       @cage, @cageSize,
+                       CASE WHEN u.code = 'pkg' THEN 0
+                            ELSE ROUND((RANDOM() * @volume)::numeric, 3)
+                       END,
+                       CASE WHEN u.code = 'pkg' THEN 0
+                            ELSE FLOOR(RANDOM() * 500 + 1)::int
+                       END,
+                       @userId
                 FROM skus s, uom u
                 WHERE s.code = @skuCode AND u.code = @uomCode
                 RETURNING id, order_number, sku_id, production_line_id, volume, uom_id,
-                          status, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, comment
+                          status, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, comment
             )
             SELECT
                 i.id,
@@ -94,6 +106,8 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                 i.cage,
                 i.cage_size,
                 0                    AS produced_packages,
+                i.produced_volume,
+                i.pkg_produced,
                 i.comment
             FROM inserted i
             JOIN skus s ON s.id = i.sku_id
@@ -211,7 +225,12 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                 o.cage,
                 o.cage_size,
                 o.comment,
-                COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)::int AS produced_packages
+                COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)::int AS produced_packages,
+                o.produced_volume,
+                CASE WHEN u.code = 'pkg'
+                     THEN COALESCE((SELECT SUM(packages) FROM cages WHERE order_number = o.order_number), 0)
+                     ELSE o.pkg_produced
+                END::int AS pkg_produced
             FROM orders o
             JOIN skus s ON s.id = o.sku_id
             LEFT JOIN uom u ON u.id = o.uom_id
@@ -229,12 +248,12 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                     c.cage_guid::text AS cage_guid,
                     c.cage_size,
                     c.packages,
-                    c.scanned_at::text AS scanned_at,
-                    u.username AS scanned_by
+                    c.completed_at::text AS completed_at,
+                    u.username AS completed_by
                 FROM cages c
-                LEFT JOIN users u ON u.id = c.scanned_by_id
+                LEFT JOIN users u ON u.id = c.completed_by_id
                 WHERE c.order_number = @orderNumber
-                ORDER BY c.scanned_at DESC
+                ORDER BY c.completed_at DESC
                 """,
                 new { orderNumber = detail.OrderNumber })).ToList();
         }
@@ -242,16 +261,15 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         return detail;
     }
 
-    public async Task<CageEntry?> ScanCageAsync(string orderNumber, string cageGuid, int cageSize, int? userId)
+    public async Task<CageEntry?> AddCageAsync(string orderNumber, int cageSize, int? userId)
     {
         await using var conn = await dataSource.OpenConnectionAsync();
         return await conn.QuerySingleOrDefaultAsync<CageEntry>("""
-            INSERT INTO cages (order_number, cage_guid, cage_size, packages, scanned_by_id)
-            VALUES (@orderNumber, @cageGuid::uuid, @cageSize, @cageSize, @userId)
-            ON CONFLICT (order_number, cage_guid) DO NOTHING
-            RETURNING id, cage_guid::text AS cage_guid, cage_size, packages, scanned_at::text AS scanned_at, NULL AS scanned_by
+            INSERT INTO cages (order_number, cage_size, packages, completed_by_id)
+            VALUES (@orderNumber, @cageSize, @cageSize, @userId)
+            RETURNING id, cage_guid::text AS cage_guid, cage_size, packages, completed_at::text AS completed_at, NULL AS completed_by
             """,
-            new { orderNumber, cageGuid, cageSize, userId = (object?)userId });
+            new { orderNumber, cageSize, userId = (object?)userId });
     }
 
     public async Task<bool> UpdateCagePackagesAsync(int cageId, int packages)

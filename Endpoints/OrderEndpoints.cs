@@ -13,7 +13,7 @@ public static class OrderEndpoints
         group.MapPost("/orders", CreateOrder).WithName("CreateOrder");
         group.MapDelete("/orders/{id:int}", CancelOrder).WithName("CancelOrder");
         group.MapGet("/orders/{id:int}", GetOrderDetail).WithName("GetOrderDetail");
-        group.MapPost("/orders/{id:int}/cages", ScanCage).WithName("ScanCage");
+        group.MapPost("/orders/{id:int}/cages", AddCage).WithName("AddCage");
         group.MapPatch("/orders/{id:int}/cages/{cageId:int}/packages", UpdateCagePackages).WithName("UpdateCagePackages");
         group.MapDelete("/orders/{id:int}/cages/{cageId:int}", DeleteCage).WithName("DeleteCage");
         group.MapPatch("/orders/{id:int}/comment", UpdateComment).WithName("UpdateComment");
@@ -76,51 +76,22 @@ public static class OrderEndpoints
         return cancelled ? Results.Ok(new { id }) : Results.NotFound(new { error = "Order not found" });
     }
 
-    private static async Task<IResult> ScanCage(
-        int id, ScanCageRequest req, IOrderRepository orders,
+    private static async Task<IResult> AddCage(
+        int id, IOrderRepository orders,
         IUserRepository users, HttpContext ctx, ILogger<Program> logger)
     {
         var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
         var (userId, _) = await users.GetUserContextAsync(keycloakId);
 
-        // QR format: {order_number}|{uuid}
-        var pipeIdx = req.QrData.LastIndexOf('|');
-        if (pipeIdx < 0)
-        {
-            logger.LogWarning("ScanCage: invalid QR format for order {Id} — no pipe separator. Raw: {Raw}", id, req.QrData);
-            return Results.BadRequest(new { error = "Invalid QR format. Expected: {order_number}|{uuid}" });
-        }
-
-        var qrOrderNumber = req.QrData[..pipeIdx];
-        var qrGuid        = req.QrData[(pipeIdx + 1)..];
-
-        if (!Guid.TryParse(qrGuid, out _))
-        {
-            logger.LogWarning("ScanCage: invalid GUID '{Guid}' for order {Id}", qrGuid, id);
-            return Results.BadRequest(new { error = "Invalid cage GUID in QR code" });
-        }
-
         var detail = await orders.GetOrderDetailAsync(id);
         if (detail is null) return Results.NotFound(new { error = "Order not found" });
 
         if (!detail.Cage)
-        {
-            logger.LogWarning("ScanCage: order {Id} ({OrderNumber}) does not have cage tracking enabled", id, detail.OrderNumber);
             return Results.BadRequest(new { error = "This order does not use cage tracking" });
-        }
 
-        if (!string.Equals(detail.OrderNumber, qrOrderNumber, StringComparison.OrdinalIgnoreCase))
-        {
-            logger.LogWarning("ScanCage: order number mismatch — QR has '{QrOrder}', route id {Id} is '{ActualOrder}'", qrOrderNumber, id, detail.OrderNumber);
-            return Results.BadRequest(new { error = $"QR code belongs to order '{qrOrderNumber}', not '{detail.OrderNumber}'" });
-        }
-
-        var cage = await orders.ScanCageAsync(detail.OrderNumber, qrGuid, detail.CageSize, userId);
-        if (cage is null)
-            return Results.Conflict(new { error = "Cage already scanned for this order" });
-
-        logger.LogInformation("Cage scanned: {Guid} for order {OrderNumber}", qrGuid, detail.OrderNumber);
-        return Results.Created($"/api/orders/{id}/cages/{cage.Id}", cage);
+        var cage = await orders.AddCageAsync(detail.OrderNumber, detail.CageSize, userId);
+        logger.LogInformation("Cage added for order {OrderNumber}", detail.OrderNumber);
+        return Results.Created($"/api/orders/{id}/cages/{cage!.Id}", cage);
     }
 
     private static async Task<IResult> UpdateCagePackages(

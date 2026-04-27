@@ -18,6 +18,8 @@ public class Order
     public string Sequence { get; set; } = "";
     public bool Cage { get; set; }
     public int ProducedPackages { get; set; }
+    public decimal ProducedVolume { get; set; }
+    public int PkgProduced { get; set; }
     public string? Comment { get; set; }
 }
 
@@ -41,6 +43,8 @@ public class OrderDetail
     public int CageSize { get; set; }
     public string? Comment { get; set; }
     public int ProducedPackages { get; set; }
+    public decimal ProducedVolume { get; set; }
+    public int PkgProduced { get; set; }
     public List<CageEntry> Cages { get; set; } = [];
 }
 
@@ -50,8 +54,8 @@ public class CageEntry
     public string CageGuid { get; set; } = "";
     public int CageSize { get; set; }
     public int Packages { get; set; }
-    public string ScannedAt { get; set; } = "";
-    public string? ScannedBy { get; set; }
+    public string CompletedAt { get; set; } = "";
+    public string? CompletedBy { get; set; }
 }
 
 public class Uom
@@ -63,11 +67,10 @@ public class Uom
 }
 
 public record Sku(int Id, string Code, string Name, string Unit);
+public record ProductionLine(int Id, string Name);
 
 public record CreateOrderRequest(string OrderNumber, string SkuCode, int LineId, decimal Volume, string UomCode, string Priority, string? DueDate, string? PlannedStartAt, string? PlannedCompleteAt, bool Cage, int CageSize = 50);
 public record TransitionStatusRequest(string Action); // action: "start" | "pause" | "complete"
-
-public record ScanCageRequest(string QrData);
 
 public record UpdateCagePackagesRequest(int Packages);
 

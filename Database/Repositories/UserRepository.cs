@@ -22,19 +22,21 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
     }
 
     public async Task<(int Id, string Role, string FullName)> UpsertUserAsync(
-        string keycloakId, string email, string username, string fullName)
+        string keycloakId, string email, string username, string fullName, IEnumerable<string> groups)
     {
+        var groupList = groups.ToList();
+        var role = groupList.Contains("mes-admins") ? "admin"
+                 : groupList.Contains("mes-viewers") ? "viewer"
+                 : "viewer";
+
         await using var conn = await dataSource.OpenConnectionAsync();
-        // First user ever to log in gets admin; subsequent new users get viewer
         var result = await conn.QuerySingleAsync<UpsertResult>("""
             INSERT INTO users (keycloak_id, email, username, full_name, last_login, role)
-            VALUES (
-                @keycloakId, @email, @username, @fullName, NOW(),
-                CASE WHEN NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin') THEN 'admin' ELSE 'viewer' END
-            )
+            VALUES (@keycloakId, @email, @username, @fullName, NOW(), @role)
             ON CONFLICT (keycloak_id) DO UPDATE
                 SET email      = EXCLUDED.email,
                     username   = EXCLUDED.username,
+                    role       = EXCLUDED.role,
                     last_login = NOW()
             RETURNING id, role, COALESCE(full_name, '') AS full_name, (xmax = 0) AS is_new
             """,
@@ -43,7 +45,8 @@ public class UserRepository(NpgsqlDataSource dataSource, ILogger<UserRepository>
                 keycloakId,
                 email    = string.IsNullOrEmpty(email)    ? null : email,
                 username = string.IsNullOrEmpty(username) ? null : username,
-                fullName = string.IsNullOrEmpty(fullName) ? null : fullName
+                fullName = string.IsNullOrEmpty(fullName) ? null : fullName,
+                role
             });
 
         if (result.IsNew)

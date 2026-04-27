@@ -73,6 +73,7 @@ builder.Services.AddSingleton(dataSource);
 builder.Services.AddSingleton<IOrderRepository, OrderRepository>();
 builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<ISkuRepository, SkuRepository>();
+builder.Services.AddSingleton<ILineRepository, LineRepository>();
 builder.Services.AddSingleton<IUomRepository, UomRepository>();
 builder.Services.AddSingleton<ILogRepository, LogRepository>();
 builder.Services.AddSingleton<IMachineStateRepository, MachineStateRepository>();
@@ -107,7 +108,8 @@ app.Use(async (ctx, next) =>
             var username = ctx.User.FindFirst("preferred_username")?.Value ?? "";
             var fullName = ctx.User.FindFirst("name")?.Value
                 ?? $"{ctx.User.FindFirst("given_name")?.Value} {ctx.User.FindFirst("family_name")?.Value}".Trim();
-            await users.UpsertUserAsync(keycloakId, email, username, fullName);
+            var groups   = ctx.User.Claims.Where(c => c.Type == "groups").Select(c => c.Value);
+            await users.UpsertUserAsync(keycloakId, email, username, fullName, groups);
         }
     }
     await next();
@@ -118,6 +120,7 @@ app.MapSettingsEndpoints();
 app.MapMachineStateEndpoints();
 app.MapOrderEndpoints();
 app.MapSkuEndpoints();
+app.MapLineEndpoints();
 app.MapUomEndpoints();
 app.MapUserEndpoints();
 app.MapNotificationEndpoints();

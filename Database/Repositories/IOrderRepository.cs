@@ -8,7 +8,7 @@ public interface IOrderRepository
     Task<Order> CreateOrderAsync(CreateOrderRequest req, int? userId, string createdByUsername);
     Task<bool> CancelOrderAsync(int orderId, string cancelledBy);
     Task<OrderDetail?> GetOrderDetailAsync(int orderId);
-    Task<CageEntry?> ScanCageAsync(string orderNumber, string cageGuid, int cageSize, int? userId);
+    Task<CageEntry?> AddCageAsync(string orderNumber, int cageSize, int? userId);
     Task<bool> UpdateCagePackagesAsync(int cageId, int packages);
     Task<bool> UpdateOrderCommentAsync(int orderId, string? comment);
     Task<bool> DeleteCageAsync(int cageId);

@@ -74,9 +74,10 @@ public static class DashboardEndpoints
         return Results.Ok(await logs.GetRecentAsync(limit, type, level));
     }
 
-    private static async Task<IResult> GetStates(IMachineStateRepository machineStates, int lineId = 1)
+    private static async Task<IResult> GetStates(IMachineStateRepository machineStates, int lineId = 1, int hours = 8)
     {
-        return Results.Ok(await machineStates.GetStatesForLineAsync(lineId));
+        var from = DateTimeOffset.UtcNow.AddHours(-hours);
+        return Results.Ok(await machineStates.GetStatesForLineAsync(lineId, from));
     }
 
     private static Order[] GetCurrentOrders()
@@ -94,7 +95,7 @@ public static class DashboardEndpoints
             Sku = skus[Random.Shared.Next(skus.Length)],
             Priority = priorities[Random.Shared.Next(priorities.Length)],
             Volume = Random.Shared.Next(100, 2001),
-            UomCode = "pcs",
+            UomCode = "pkg",
             Line = Random.Shared.Next(1, 4),
             DueDate = now.AddDays(i - 1).ToString("yyyy-MM-dd"),
             Sequence = seq,

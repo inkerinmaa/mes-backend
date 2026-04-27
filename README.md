@@ -5,7 +5,7 @@
 ## Quick start (local dev)
 
 ```bash
-# Prerequisites: .NET 10 SDK, Docker (PostgreSQL), Keycloak on port 8080
+# Prerequisites: .NET 10 SDK, Docker (PostgreSQL + Keycloak running)
 cd ~/projects/dwh && docker compose up -d
 docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/init.sql
 
@@ -14,54 +14,158 @@ dotnet run
 # Listening on http://localhost:5000
 ```
 
-Nginx proxies `https://mes.test.local/api/*` and `/hubs/*` to `localhost:5000`.
+In local dev `Redis:ConnectionString` is empty in `appsettings.json`, so SignalR runs in-memory (fine for a single process).
 
-In local dev, `Redis:ConnectionString` is empty in `appsettings.json`, so SignalR runs in-memory (single process — fine for dev).
+---
 
-## Docker deployment
+## Full deployment on a new server
 
-See `docker-compose.yml` and `.env.example` in the project root (`~/projects/`).
+### 1. Prerequisites
+
+- Docker Engine with Compose v2
+- Git
+- An existing Keycloak instance (any version ≥ 21)
+- A domain or IP for the MES app (e.g. `mes.example.com`)
+
+### 2. Clone repositories
 
 ```bash
-cd ~/projects
+git clone https://github.com/your-org/mes-backend.git   ~/projects/mes-backend
+git clone https://github.com/your-org/mes-frontend.git  ~/projects/mes-frontend
+git clone https://github.com/your-org/mes-docker.git    ~/projects/mes-docker
+git clone https://github.com/your-org/dwh.git           ~/projects/dwh
+```
+
+### 3. Start PostgreSQL and apply schema
+
+```bash
+cd ~/projects/dwh
+docker compose up -d
+# Wait ~5 s for Postgres to initialise
+docker exec -i postgres-db psql -U nik -d mydb < init.sql
+```
+
+### 4. Configure Keycloak
+
+Do this once in your Keycloak admin console (`https://<keycloak>/admin`).
+
+#### 4a. Create realm
+
+- Realm name: `mes-realm` (or any name — update env vars to match)
+
+#### 4b. Create client `mes-frontend`
+
+| Setting | Value |
+|---------|-------|
+| Client type | OpenID Connect |
+| Client authentication | OFF (public client) |
+| Standard flow | ON |
+| Direct access grants | OFF |
+| Valid redirect URIs | `https://<mes-domain>/*` |
+| Valid post-logout redirect URIs | `https://<mes-domain>/*` |
+| Web origins | `https://<mes-domain>` |
+
+#### 4c. Add protocol mappers to `mes-frontend`
+
+Go to **Clients → mes-frontend → Client scopes → mes-frontend-dedicated → Add mapper → By configuration**.
+
+**Mapper 1 — Audience**
+| Field | Value |
+|-------|-------|
+| Mapper type | Audience |
+| Name | `mes-frontend-audience` |
+| Included client audience | `mes-frontend` |
+| Add to access token | ON |
+
+**Mapper 2 — Group membership**
+| Field | Value |
+|-------|-------|
+| Mapper type | Group Membership |
+| Name | `groups` |
+| Token claim name | `groups` |
+| Full group path | OFF |
+| Add to ID token | ON |
+| Add to access token | ON |
+| Add to userinfo | ON |
+
+#### 4d. Create groups
+
+Create two groups in **Groups**:
+- `mes-admins` — users in this group get `admin` role in MES
+- `mes-viewers` — users in this group get `viewer` role in MES
+
+#### 4e. Create users
+
+For each MES user:
+1. **Users → Add user** — set username, email, enable the account
+2. **Credentials** tab → set a password (disable "Temporary")
+3. **Groups** tab → assign to `mes-admins` or `mes-viewers`
+
+### 5. Configure the MES stack (.env)
+
+```bash
+cd ~/projects/mes-docker
 cp .env.example .env
-# Edit .env with real values
+```
+
+Edit `.env`:
+
+```env
+# Npgsql connection string. Use host.docker.internal when Postgres is
+# a Docker container on the same host, exposed on port 5432.
+POSTGRES_CONNECTION_STRING=Host=host.docker.internal;Port=5432;Database=mydb;Username=nik;Password=mysecretpassword
+
+# Public Keycloak realm URL — must exactly match the `iss` claim in JWTs.
+KEYCLOAK_AUTHORITY=https://keycloak.example.com/realms/mes-realm
+
+# Internal URL the backend container uses to fetch JWKS.
+# If Keycloak is on the same host (Docker, port 8080):
+KEYCLOAK_BACKCHANNEL_AUTHORITY=http://host.docker.internal:8080/realms/mes-realm
+# If Keycloak is on a different host reachable from this machine:
+# KEYCLOAK_BACKCHANNEL_AUTHORITY=https://keycloak.example.com/realms/mes-realm
+
+# Keycloak client ID (must match what you created in step 4b)
+KEYCLOAK_CLIENT_ID=mes-frontend
+
+# Host port for the nginx container
+HTTP_PORT=80
+```
+
+### 6. Start the stack
+
+```bash
+cd ~/projects/mes-docker
 docker compose up -d --build
 ```
 
-The backend image is built from `mes-backend/Dockerfile` (multi-stage: SDK build → ASP.NET runtime). All configuration is passed through environment variables which override `appsettings.json` values using .NET's double-underscore convention (`Redis__ConnectionString` → `Redis:ConnectionString`).
+The MES frontend is now available at `http://<server>:${HTTP_PORT}`.
 
-## Architecture
+### 7. Verify
 
-```
-Frontend (Vue SPA)
-        │ HTTPS / WSS
-        ▼
-   Nginx reverse proxy
-        │
-   ┌────┴──────────────────────────────────┐
-   │           mes-backend                 │
-   │                                       │
-   │  REST Endpoints  SignalR Hub          │
-   │  /api/*          /hubs/dashboard      │
-   │       │               │               │
-   │       ▼               ▼               │
-   │  Repositories   Background services  │
-   │       │         OrdersBackgroundSvc   │
-   │       │         ProcessDataService    │
-   │       ▼         DbLoggerProvider      │
-   │  PostgreSQL                           │
-   └───────────────────────────────────────┘
-```
+1. Open `http://<server>` — you should see the login page.
+2. Click "Log in with Keycloak" — you should be redirected to Keycloak and back.
+3. Check `docker compose logs -f mes-backend` — you should see `User synced: <username> | Role=admin`.
+
+---
 
 ## Role model
 
-Two roles: `admin` and `viewer`. Role is stored in the `users` table and checked server-side on every write operation.
+MES has two built-in roles: `admin` and `viewer`. Role is derived from Keycloak **group membership** on every login and stored in the `users` table.
 
-| Action | Admin | Viewer |
+| Keycloak group | MES role |
+|---------------|----------|
+| `mes-admins` | `admin` |
+| `mes-viewers` | `viewer` |
+| neither | `viewer` (fallback) |
+
+If a user is in both groups, `admin` wins.
+
+### What each role can do
+
+| Action | admin | viewer |
 |--------|-------|--------|
 | View orders, dashboard, events | ✓ | ✓ |
-| Scan cage QR codes | ✓ | ✓ |
+| Add completed cage to order | ✓ | ✓ |
 | Edit cage packages, order comment | ✓ | ✓ |
 | Update own profile name | ✓ | ✓ |
 | Configure own notification prefs | ✓ | ✓ |
@@ -71,127 +175,203 @@ Two roles: `admin` and `viewer`. Role is stored in the `users` table and checked
 | Change global settings | ✓ | ✗ |
 | Change other users' roles | ✓ | ✗ |
 
-All role checks are enforced in the backend — the frontend hides controls for usability only, not security.
+All role checks are enforced in the backend. The frontend hides controls for usability, not security.
+
+### How it works technically
+
+**Token flow:**
+1. User logs in → Keycloak issues a JWT containing `"groups": ["mes-admins"]` (added by the Group Membership mapper).
+2. Frontend calls `POST /api/me` → backend reads `groups` claims from the JWT and calls `UpsertUserAsync(..., groups)`.
+3. `UpsertUserAsync` maps `mes-admins → "admin"`, `mes-viewers → "viewer"`, writes the role to `users.role`.
+4. On every subsequent API call, endpoints call `GetUserContextAsync(keycloakId)` which reads `role` from the DB.
+
+**Why store role in DB instead of reading the JWT every time:**
+`GetUserContextAsync` is called on every admin-guarded request. Reading the DB is a single indexed lookup. It also lets an admin demote a user via the Settings UI without requiring that user to log out and back in.
+
+**Role update timing:**
+Changing a user's Keycloak group takes effect on their **next login** (when `POST /api/me` runs). For an immediate role change, use the MES Settings → Team Members page (admin only) or update `users.role` directly in the DB.
+
+---
+
+## Adding a new role
+
+Example: adding a `supervisor` role that can create orders but not cancel them.
+
+### 1. Keycloak — create group
+
+Add group `mes-supervisors` in the Keycloak admin console.
+
+### 2. Backend — map group to role
+
+In `UserRepository.cs`, update `UpsertUserAsync`:
+
+```csharp
+var role = groupList.Contains("mes-admins")      ? "admin"
+         : groupList.Contains("mes-supervisors") ? "supervisor"
+         : groupList.Contains("mes-viewers")     ? "viewer"
+         : "viewer";
+```
+
+### 3. Backend — add permission checks
+
+In each endpoint, add a check for the new role as needed:
+
+```csharp
+// Allow admin and supervisor, block viewer
+var (userId, role) = await users.GetUserContextAsync(keycloakId);
+if (role != "admin" && role != "supervisor") return Results.Forbid();
+```
+
+### 4. Frontend — gate UI elements
+
+In `useMesUser.ts`, extend `canSeeAdminUi` or add a new computed:
+
+```ts
+const canManageOrders = computed(() =>
+  mesRole.value === 'admin' || mesRole.value === 'supervisor'
+)
+```
+
+Then use it in templates:
+```vue
+<UButton v-if="canManageOrders" label="New order" ... />
+```
+
+### 5. Update realm-export.json
+
+Add the new group to `keycloak-setup/realm-export.json`:
+```json
+{ "name": "mes-supervisors", "subGroups": [] }
+```
+
+---
+
+## Adding permissions for a specific activity
+
+Example: restricting "Add cage" to admins only (currently open to any authenticated user).
+
+### Backend
+
+In `Endpoints/OrderEndpoints.cs`, inside the `AddCage` handler, add a role check after resolving the user context:
+
+```csharp
+private static async Task<IResult> AddCage(
+    int id, IOrderRepository orders,
+    IUserRepository users, HttpContext ctx, ILogger<Program> logger)
+{
+    var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+    var (userId, role) = await users.GetUserContextAsync(keycloakId);
+
+    if (role != "admin")
+        return Results.Forbid();
+
+    // ... rest of handler
+}
+```
+
+`GetUserContextAsync` hits the DB on every call (single indexed read on `keycloak_id`). It returns `(int? Id, string? Role)` — null if the user has never logged in.
+
+### Frontend
+
+In `orders/[id].vue`, import `useMesUser` and gate the button:
+
+```vue
+<script setup>
+import { useMesUser } from '../../composables/useMesUser'
+const { canSeeAdminUi } = useMesUser()
+</script>
+
+<template>
+  <UButton v-if="canSeeAdminUi" label="Add Cage" @click="addCage" />
+</template>
+```
+
+`canSeeAdminUi` is `true` for any role that is not explicitly `'viewer'`. For finer control, expose the role directly:
+
+```ts
+const { mesRole } = useMesUser()
+// then: v-if="mesRole === 'admin'"
+```
+
+---
 
 ## User management
 
-### How users are provisioned
+### Adding a user
 
-MES does not have its own user creation flow. Users are managed entirely in Keycloak. On first login:
-1. Keycloak authenticates the user and issues a JWT.
-2. The frontend calls `POST /api/me` which upserts the user into the `users` table from JWT claims.
-3. **The first user to ever log in is automatically promoted to `admin`.** Every subsequent new user gets `viewer`.
+1. Create the user in Keycloak (username, password, assign to `mes-admins` or `mes-viewers`).
+2. The user logs in — `POST /api/me` upserts them into `users` with the correct role automatically.
 
-There is no invite link or manual DB step needed — just create the user in Keycloak and tell them to log in.
+No DB steps needed.
 
-### Adding a new user (step by step)
+### Changing a user's role
 
-**In Keycloak** (`https://keycloak.test.local` → `mes-realm`):
+**Option A — MES UI** (Settings → General → Team Members, admin only): immediate effect.
 
-1. Users → **Add user**
-   - Username: e.g. `operator1`
-   - Email: optional
-   - Save
+**Option B — Keycloak group** (move user between groups): takes effect on next login.
 
-2. → **Credentials** tab → **Set password** → disable "Temporary"
-
-3. → **Attributes** tab → Add attribute:
-   - Key: `role`
-   - Value: `viewer` (or `admin` for another administrator)
-   - Save
-
-That's it. The user can now log in. The `role` attribute flows into the JWT via the attribute mapper (see Keycloak setup section), gets written to the DB on first login, and is checked by the API on every write request.
-
-### Changing a user's role after they've logged in
-
-Option A — **via the MES UI** (Settings → General → Team Members, admin only):
-- Any admin can promote/demote other users from the UI.
-
-Option B — **directly in the DB** (if locked out of admin):
+**Option C — direct DB** (use when locked out of admin):
 ```sql
 UPDATE users SET role = 'admin' WHERE username = 'operator1';
 ```
 
-Option C — **via Keycloak attribute** (takes effect on next login):
-- Change the `role` attribute in Keycloak → user's DB role will be overwritten on their next `POST /api/me` call.
-
-> Note: The DB `role` column is the source of truth for API authorization. The Keycloak `role` attribute is only read at login time (via `POST /api/me`). Changing it in Keycloak does not update the DB role until the user logs in again.
+---
 
 ## Data model
 
 ### `users`
-Upserted on every login from JWT claims. `keycloak_id` (JWT `sub`) is the unique key.
+Upserted on every login. `keycloak_id` (JWT `sub`) is the unique key. `role` is overwritten from Keycloak groups on every login.
 
-| Column | Type | Notes |
-|--------|------|-------|
-| keycloak_id | VARCHAR | JWT sub claim |
-| email, username, full_name | VARCHAR | From JWT; full_name preserved on subsequent logins |
-| role | VARCHAR | `admin` or `viewer`; first user auto-promoted to admin |
-| last_login | TIMESTAMPTZ | Updated each login |
-| last_alert_ack_at | TIMESTAMPTZ | Timestamp of last "Acknowledge All" — alerts API filters to entries after this |
-
-### `uom` — Unit of Measure
-Reference table seeded with: `kg`, `t`, `g`, `pcs`, `m`, `m2`, `m3`, `L`.
-
-### `skus` — Product SKUs
-10 seed SKUs across Alpha, Beta, Charlie, Delta, Echo product lines.
-
-### `production_lines`
-Fixed 3 rows (id 1–3): Line 1 (primary), Line 2 (secondary), Line 3 (packaging).
+| Column | Notes |
+|--------|-------|
+| `keycloak_id` | JWT `sub` claim |
+| `email`, `username` | Overwritten on every login |
+| `full_name` | Set on first login; preserved on subsequent logins (user may edit it) |
+| `role` | Derived from Keycloak group membership on every login |
+| `last_login` | Updated each login |
+| `last_alert_ack_at` | Timestamp of last "Acknowledge All" |
 
 ### `orders`
 Core production work order.
 
-| Column | Type | Notes |
-|--------|------|-------|
-| order_number | VARCHAR UNIQUE | Human-readable, also FK in `cages` |
-| sku_id, production_line_id, uom_id | INTEGER FK | |
-| volume | DECIMAL(12,3) | Target production quantity |
-| status | VARCHAR | `created` / `running` / `paused` / `completed` / `cancelled` |
-| priority | VARCHAR | `High` / `Medium` / `Low` |
-| planned_start_at, planned_complete_at | TIMESTAMPTZ | Set by planning at order creation; drive queue sequence |
-| start_at | TIMESTAMPTZ | Auto-stamped when order first transitions to `running` |
-| complete_at | TIMESTAMPTZ | Auto-stamped when order transitions to `completed` |
-| cage | BOOLEAN | Whether cage tracking is enabled |
-| cage_size | INTEGER | Packages per cage, set at creation, immutable |
+| Column | Notes |
+|--------|-------|
+| `status` | `created` / `running` / `paused` / `completed` / `cancelled` |
+| `cage` | Whether cage tracking is enabled |
+| `cage_size` | Packages per cage, set at creation, immutable |
 
 **State machine:**
 ```
 created ──[start]──► running ──[pause]──► paused
    │                    │                   │
-   └──[cancel]──►  cancelled ◄──[cancel]──-─┘
+   └──[cancel]──►  cancelled ◄──[cancel]────┘
                    running ──[complete]──► completed
 ```
-`completed` and `cancelled` are terminal.
 
-### `cages` — Scanned cage records
-One row per QR scan. QR format: `{order_number}|{uuid}`.
+### `cages`
+One row per completed cage. `cage_guid` is auto-generated (`gen_random_uuid()`).
 
-### `machine_states` — Line state timeline
-Append-only event log. Duration computed dynamically via `LEAD(ts) OVER (...) - ts`.
+| Column | Notes |
+|--------|-------|
+| `cage_guid` | Auto-generated UUID |
+| `cage_size` | Copied from the order at completion time |
+| `packages` | Editable after creation (defaults to `cage_size`) |
+| `completed_at` | Timestamp of cage completion |
+| `completed_by_id` | FK to `users.id` |
 
-| Column | Values |
-|--------|--------|
-| state | `running` / `warning` / `stopped` |
+### `machine_states`
+Append-only timeline. Duration computed via `LEAD(ts) OVER (...) - ts`.
 
-### `logs` — Structured event log
-Written automatically by `DbLoggerProvider`. After each write, `AlertsUpdated` is broadcast via SignalR to connected clients.
+### `logs`
+Written by `DbLoggerProvider`. Category → type mapping: `UserRepository`→USER, `OrderRepository`→PROCESS, others→APP.
 
-| Column | Values |
-|--------|--------|
-| type | `USER` / `PROCESS` / `APP` / `EQUIPMENT` / `INTEGRATION` |
-| level | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
+### `settings`
+| Key | Default |
+|-----|---------|
+| `timeline_auto_refresh_enabled` | `true` |
+| `timeline_refresh_interval_seconds` | `60` |
 
-Category → type mapping: `UserRepository`→USER, `OrderRepository`→PROCESS, all others→APP.
-
-### `settings` — Global key-value store
-| Key | Default | Description |
-|-----|---------|-------------|
-| `timeline_auto_refresh_enabled` | `true` | Machine state timeline periodic refresh |
-| `timeline_refresh_interval_seconds` | `60` | Refresh interval in seconds |
-
-### `user_notification_prefs` — Per-user alert preferences
-`(user_id, log_type)` primary key. Which log types appear in the Alerts panel. Defaults to all enabled when no rows exist for a user.
+---
 
 ## API endpoints
 
@@ -209,24 +389,26 @@ All require JWT Bearer (Keycloak). Admin-only endpoints return 403 for viewers.
 | DELETE | `/api/orders/{id}` | **admin** | Cancel order |
 | PATCH | `/api/orders/{id}/status` | **admin** | Transition status (`start`/`pause`/`complete`) |
 | GET | `/api/orders/{id}` | any | Order detail + cage list |
-| POST | `/api/orders/{id}/cages` | any | Scan cage QR |
+| POST | `/api/orders/{id}/cages` | any | Add completed cage |
 | PATCH | `/api/orders/{id}/cages/{cageId}/packages` | any | Edit cage packages |
 | DELETE | `/api/orders/{id}/cages/{cageId}` | any | Remove cage |
 | PATCH | `/api/orders/{id}/comment` | any | Update comment |
 | GET | `/api/skus` | any | SKU list |
 | GET | `/api/uoms` | any | Unit of measure list |
-| POST | `/api/me` | any | Upsert user from JWT |
+| POST | `/api/me` | any | Upsert user from JWT (called on every login) |
 | PATCH | `/api/me/name` | any | Update display name |
 | GET | `/api/me/notification-prefs` | any | Get alert type preferences |
 | PUT | `/api/me/notification-prefs` | any | Save alert type preferences |
-| GET | `/api/notifications` | any | Unacknowledged alerts (filtered by prefs) |
+| GET | `/api/notifications` | any | Unacknowledged alerts |
 | POST | `/api/notifications/ack` | any | Acknowledge all alerts |
-| GET | `/api/members` | any | Team members (mock) |
+| GET | `/api/members` | any | Team members |
 | GET | `/api/settings` | any | Global settings |
 | PATCH | `/api/settings/{key}` | **admin** | Update a setting |
 | GET | `/api/users` | any | All users |
 | PATCH | `/api/users/{id}/role` | **admin** | Change user role |
 | POST | `/api/machine-states` | any | Insert state event + broadcast `MachineStateUpdated` |
+
+---
 
 ## SignalR — `/hubs/dashboard`
 
@@ -238,98 +420,25 @@ JWT passed as `?access_token=` query param.
 | `StatsUpdated` | Every 3 s | `{ totalTonnes, lineUptime, wastePercentage, … }` |
 | `ProcessDataUpdated` | Every 3 s | `{ timestamp, temperature, pressure, cycleTime, machineState }` |
 | `MachineStateUpdated` | New `machine_states` row | `{ lineId }` |
-| `AlertsUpdated` | Every log write | (no payload) — clients re-fetch `/api/notifications` |
+| `AlertsUpdated` | Every log write | (no payload) |
 
-### Redis SignalR backplane
+### Redis backplane
 
-Without Redis, SignalR state is in-memory per process. With a single backend instance this is fine. With multiple instances (Docker replicas, k8s pods), a browser connected to instance A won't receive events broadcast by instance B.
-
-**How the backplane works:**
+Without Redis, SignalR state is in-memory per process. With multiple backend instances, a browser connected to instance A won't receive events from instance B. Redis solves this:
 
 ```
 Browser ──WS──► Instance A
 Browser ──WS──► Instance B
 
-ProcessDataService (on Instance B) calls:
-  hub.Clients.All.SendAsync("StatsUpdated", data)
-      │
-      ▼
-  StackExchange.Redis publishes to Redis channel "signalr:mes-backend"
-      │
-      ├──► Instance A subscribes → pushes to its connected browsers
-      └──► Instance B pushes to its own connected browsers
+ProcessDataService (on B) broadcasts:
+  → Redis Pub/Sub channel
+  → Instance A subscribes → pushes to its browsers
+  → Instance B pushes to its own browsers
 ```
 
-Every backend instance subscribes to the same Redis Pub/Sub channels. A broadcast on any instance fans out through Redis to all instances, which then each push to their local WebSocket connections.
+`Redis:ConnectionString` is set to `redis:6379` in `docker-compose.yml`. Empty in dev → in-memory fallback.
 
-Configured in `Program.cs`:
-```csharp
-var redisConn = builder.Configuration["Redis:ConnectionString"];
-var signalR = builder.Services.AddSignalR();
-if (!string.IsNullOrEmpty(redisConn))
-    signalR.AddStackExchangeRedis(redisConn);
-```
-
-When `Redis:ConnectionString` is empty (local dev), SignalR falls back to in-memory — no Redis needed for a single process.
-
-## Deploying with a different Keycloak
-
-### What to do in Keycloak
-
-1. **Create a realm** — e.g. `mes-realm`.
-
-2. **Create a client** named `mes-frontend`:
-   - Client authentication: **OFF** (public client)
-   - Standard flow: **ON**, Direct access grants: **OFF**
-   - Valid redirect URIs: `https://<your-domain>/auth/callback`
-   - Valid post-logout redirect URIs: `https://<your-domain>`
-   - Web origins: `https://<your-domain>`
-
-3. **Add an audience mapper** so `aud: mes-frontend` appears in tokens:
-   - Client → `mes-frontend` → Client scopes → `mes-frontend-dedicated` → Add mapper → **Audience**
-   - Included client audience: `mes-frontend` → Add to access token: **ON**
-
-4. **Add a `role` attribute mapper** so the backend can read role from JWT:
-   - Client → `mes-frontend` → Client scopes → `mes-frontend-dedicated` → Add mapper → **User Attribute**
-   - User attribute: `role` | Token claim name: `role` | Claim JSON type: String | Add to access token: **ON**
-
-5. **Create users** with `role = admin` or `role = viewer` in their Attributes tab.
-
-### What to change in the backend
-
-```json
-// appsettings.json (or appsettings.Production.json)
-{
-  "Authentication": {
-    "Authority": "https://<keycloak-public-url>/realms/<realm>",
-    "BackchannelAuthority": "http://<keycloak-internal-url>/realms/<realm>",
-    "Audience": "mes-frontend"
-  }
-}
-```
-
-| Setting | Purpose |
-|---------|---------|
-| `Authority` | Must match the `iss` claim in JWTs — use the **public** URL |
-| `BackchannelAuthority` | Internal URL for JWKS fetch; use direct address if public hostname isn't reachable from the server |
-| `Audience` | Must match the Keycloak client ID |
-
-### What to change in the frontend
-
-Update `authority` in `src/composables/useAuth.ts`:
-```ts
-authority: "https://<keycloak-public-url>/realms/<realm>",
-```
-
-### Deployment checklist
-
-- [ ] Realm and client `mes-frontend` created
-- [ ] Redirect / post-logout URIs set to the new domain
-- [ ] Audience mapper added
-- [ ] `role` attribute mapper added
-- [ ] Users created with `role` attribute set
-- [ ] Backend `Authority`, `BackchannelAuthority`, `Audience`, DB connection string updated
-- [ ] Frontend `useAuth.ts` `authority` updated and frontend rebuilt
+---
 
 ## Project structure
 
@@ -337,32 +446,20 @@ authority: "https://<keycloak-public-url>/realms/<realm>",
 mes-backend/
 ├── Program.cs                        DI, middleware, endpoint mapping
 ├── Models/
-│   ├── Dashboard.cs                  KPI and efficiency types
-│   ├── Order.cs                      Order, OrderDetail, CageEntry, request records,
-│   │                                 UserNotificationPref, AppSetting
-│   ├── LogEntry.cs
-│   └── Member.cs
+│   ├── Order.cs                      Order, OrderDetail, CageEntry, request records
+│   └── ...
 ├── Database/Repositories/
 │   ├── IOrderRepository + OrderRepository
-│   ├── IUserRepository + UserRepository   (incl. notification prefs + ack)
-│   ├── ISkuRepository + SkuRepository
-│   ├── IUomRepository + UomRepository
-│   ├── ILogRepository + LogRepository
-│   ├── IMachineStateRepository + MachineStateRepository
-│   └── ISettingsRepository + SettingsRepository
+│   ├── IUserRepository + UserRepository
+│   └── ...
 ├── Endpoints/
-│   ├── DashboardEndpoints.cs
 │   ├── OrderEndpoints.cs
-│   ├── MachineStateEndpoints.cs
-│   ├── NotificationEndpoints.cs
-│   ├── SettingsEndpoints.cs
-│   ├── SkuEndpoints.cs / UomEndpoints.cs
-│   └── UserEndpoints.cs / MemberEndpoints.cs
+│   ├── UserEndpoints.cs
+│   └── ...
 ├── Hubs/DashboardHub.cs
 ├── Services/
-│   ├── OrdersBackgroundService.cs    Simulates order events every 5 s
-│   ├── ProcessDataService.cs         Simulates OPC UA telemetry every 3 s;
-│   │                                 randomly transitions a line state every ~30 s
-│   └── DbLoggerProvider.cs           ILoggerProvider → logs table + AlertsUpdated broadcast
+│   ├── ProcessDataService.cs         Simulates OPC UA telemetry + line state changes
+│   ├── OrdersBackgroundService.cs    Simulates order events
+│   └── DbLoggerProvider.cs           ILoggerProvider → logs table
 └── appsettings.json
 ```
