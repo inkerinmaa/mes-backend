@@ -17,7 +17,6 @@ builder.Services.AddAuthentication("Bearer")
     {
         var authority = builder.Configuration["Authentication:Authority"]!;
         var audience = builder.Configuration["Authentication:Audience"]!;
-        var clientSecret = builder.Configuration["Authentication:ClientSecret"]!;
         var backchannelAuthority = builder.Configuration["Authentication:BackchannelAuthority"];
 
         if (!string.IsNullOrEmpty(backchannelAuthority))
@@ -38,10 +37,7 @@ builder.Services.AddAuthentication("Bearer")
             ValidIssuer = authority,
             ValidateAudience = true,
             ValidAudience = audience,
-            ValidateLifetime = true,
-            // Reject tokens where azp doesn't match our client — guards against
-            // tokens issued to other clients being replayed against this API.
-            ValidTypes = ["JWT"],
+            ValidateLifetime = true
         };
 
 
