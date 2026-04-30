@@ -51,7 +51,8 @@ The API does not initialize or migrate the schema on startup.
 | `materials` | `code`, `name`, `unit`, `stock_quantity` | Raw material inventory |
 | `orders` | `order_number`, `sku_id`, `production_line_id`, `volume`, `uom_id`, `status`, `priority`, `due_date`, `start_at`, `finish_at`, `comment`, `cage`, `cage_size`, `produced_volume`, `pkg_produced`, `created_by_id`, `created_at`, `updated_at` | Status: `created`→`running`→`paused`→`running`→`completed`/`cancelled`. `cage=true` enables cage tracking for `pkg` orders. `produced_volume` tracks output in the order's UOM. `pkg_produced` is discrete package count — for `pkg` orders equals `SUM(cages.packages)`; for other UOMs randomly set on creation (updated later by OPC UA/NATS). |
 | `cages` | `order_number`, `cage_guid` (auto UUID), `cage_size`, `packages`, `completed_at`, `completed_by_id` | One row per completed cage; `cage_guid` is `gen_random_uuid()`; only `packages` is editable after creation |
-| `machine_states` | `production_line_id`, `state` (running/warning/stopped), `ts` | Append-only event log; duration computed via `LEAD(ts) OVER (...) - ts` |
+| `machine_states` | `id`, `production_line_id`, `state` (running/warning/stopped), `ts` | Append-only event log; duration computed via `LEAD(ts) OVER (...) - ts`; `id` returned by `InsertStateAsync` for linking events |
+| `production_events` | `id`, `line_id`, `order_id?`, `machine_state_id?`, `event_type`, `severity`, `title`, `description`, `start_at`, `end_at?`, `created_by_id`, `created_at` | Operator-created annotations; `machine_state_id` links to an auto-detected stop |
 | `logs` | `type` (USER/PROCESS/APP/EQUIPMENT/INTEGRATION), `message`, `level` (DEBUG/INFO/WARNING/ERROR/CRITICAL), `ts` | Written by `DbLoggerProvider` for all `MyDashboardApi.*` log lines ≥ INFO |
 
 ## Role model
@@ -120,7 +121,7 @@ if (role != "admin") return Results.Forbid();
 | GET | `/api/dashboard/events?type=&level=&limit=` | Last N log entries from `logs` table |
 | GET | `/api/dashboard/states?lineId=&hours=` | Machine state timeline; `hours` is window size (default 8) — backend computes `from = NOW() - hours` |
 | GET | `/api/dashboard/current-orders` | Current order queue snapshot (mock) |
-| GET | `/api/logs?type=&level=&limit=` | Filtered log entries from `logs` table |
+| GET | `/api/logs?type=&level=&limit=` | Filtered log entries from `logs` table (admin only) |
 | GET | `/api/orders` | All non-cancelled orders (with produced_packages) |
 | POST | `/api/orders` | Create a new work order (admin) |
 | DELETE | `/api/orders/{id}` | Cancel an order (admin) |
@@ -137,13 +138,18 @@ if (role != "admin") return Results.Forbid();
 | GET | `/api/members` | Team members |
 | GET | `/api/notifications` | Alerts |
 | POST | `/api/notifications/ack` | Acknowledge alerts |
-| POST | `/api/machine-states` | Insert a machine state event `{ lineId, state }` and broadcast `MachineStateUpdated` via SignalR |
+| POST | `/api/machine-states` | Insert a machine state event `{ lineId, state }` and broadcast `MachineStateUpdated` via SignalR (also `StopInserted` when state=stopped) |
+| GET | `/api/events?lineId=&eventType=&severity=&limit=` | Production events log |
+| GET | `/api/events/unacknowledged` | Stopped states in last 24 h with no linked production event |
+| POST | `/api/events` | Create a production event (all authenticated users) |
+| PATCH | `/api/events/{id}/close` | Close an open event `{ endAt?, description? }` |
 
 ## SignalR events (`/hubs/dashboard`)
 - `OrdersUpdated` — every 5 s, `{ value, variation }`
 - `ProcessDataUpdated` — every 3 s, `{ timestamp, temperature, pressure, cycleTime, machineState }`
 - `StatsUpdated` — every 3 s, `{ totalTonnes, lineUptime, wastePercentage, … }`
 - `MachineStateUpdated` — on every new `machine_states` row, `{ lineId }`
+- `StopInserted` — when a new `stopped` state is inserted, `{ lineId }` (triggers events page to refresh unacknowledged stops)
 
 ## Key implementation details
 

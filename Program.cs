@@ -77,6 +77,7 @@ builder.Services.AddSingleton<ILineRepository, LineRepository>();
 builder.Services.AddSingleton<IUomRepository, UomRepository>();
 builder.Services.AddSingleton<ILogRepository, LogRepository>();
 builder.Services.AddSingleton<IMachineStateRepository, MachineStateRepository>();
+builder.Services.AddSingleton<IEventRepository, EventRepository>();
 builder.Services.AddSingleton<ISettingsRepository, SettingsRepository>();
 builder.Logging.Services.AddSingleton<ILoggerProvider, DbLoggerProvider>();
 
@@ -116,6 +117,7 @@ app.Use(async (ctx, next) =>
 });
 
 app.MapDashboardEndpoints();
+app.MapEventEndpoints();
 app.MapSettingsEndpoints();
 app.MapMachineStateEndpoints();
 app.MapOrderEndpoints();

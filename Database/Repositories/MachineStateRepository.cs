@@ -6,11 +6,11 @@ namespace MyDashboardApi.Database.Repositories;
 
 public class MachineStateRepository(NpgsqlDataSource dataSource) : IMachineStateRepository
 {
-    public async Task InsertStateAsync(int lineId, string state)
+    public async Task<int> InsertStateAsync(int lineId, string state)
     {
         await using var conn = await dataSource.OpenConnectionAsync();
-        await conn.ExecuteAsync(
-            "INSERT INTO machine_states (production_line_id, state, ts) VALUES (@lineId, @state, NOW())",
+        return await conn.ExecuteScalarAsync<int>(
+            "INSERT INTO machine_states (production_line_id, state, ts) VALUES (@lineId, @state, NOW()) RETURNING id",
             new { lineId, state });
     }
 

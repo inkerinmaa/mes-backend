@@ -12,7 +12,6 @@ public record DashboardStats(
 
 public record EfficiencyPoint(string Date, double Value);
 
-public record ProductionEvent(int Id, string Time, string Event, string Line, string Severity);
 
 public record MachineState(string Timestamp, string State, int DurationMinutes);
 

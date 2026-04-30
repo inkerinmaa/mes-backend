@@ -23,6 +23,8 @@ public static class MachineStateEndpoints
 
             await repo.InsertStateAsync(req.LineId, req.State);
             await hub.Clients.All.SendAsync("MachineStateUpdated", new { lineId = req.LineId });
+            if (req.State == "stopped")
+                await hub.Clients.All.SendAsync("StopInserted", new { lineId = req.LineId });
             return Results.Ok();
         });
     }

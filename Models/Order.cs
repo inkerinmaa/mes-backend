@@ -16,6 +16,7 @@ public class Order
     public string? StartAt { get; set; }
     public string? CompleteAt { get; set; }
     public string Sequence { get; set; } = "";
+    public int? SeqOrder { get; set; }
     public bool Cage { get; set; }
     public int ProducedPackages { get; set; }
     public decimal ProducedVolume { get; set; }
@@ -71,6 +72,8 @@ public record ProductionLine(int Id, string Name);
 
 public record CreateOrderRequest(string OrderNumber, string SkuCode, int LineId, decimal Volume, string UomCode, string Priority, string? DueDate, string? PlannedStartAt, string? PlannedCompleteAt, bool Cage, int CageSize = 50);
 public record TransitionStatusRequest(string Action); // action: "start" | "pause" | "complete"
+public record ResequenceOrderRequest(string Direction); // direction: "up" | "down"
+public record RescheduleOrderRequest(string? PlannedStartAt, string? PlannedCompleteAt);
 
 public record UpdateCagePackagesRequest(int Packages);
 

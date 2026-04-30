@@ -18,6 +18,8 @@ public static class OrderEndpoints
         group.MapDelete("/orders/{id:int}/cages/{cageId:int}", DeleteCage).WithName("DeleteCage");
         group.MapPatch("/orders/{id:int}/comment", UpdateComment).WithName("UpdateComment");
         group.MapPatch("/orders/{id:int}/status", TransitionStatus).WithName("TransitionOrderStatus");
+        group.MapPatch("/orders/{id:int}/resequence", ResequenceOrder).WithName("ResequenceOrder");
+        group.MapPatch("/orders/{id:int}/schedule", RescheduleOrder).WithName("RescheduleOrder");
         return app;
     }
 
@@ -115,6 +117,37 @@ public static class OrderEndpoints
     {
         var updated = await orders.UpdateOrderCommentAsync(id, req.Comment);
         return updated ? Results.Ok(new { id, comment = req.Comment }) : Results.NotFound(new { error = "Order not found" });
+    }
+
+    private static async Task<IResult> RescheduleOrder(
+        int id, RescheduleOrderRequest req, IOrderRepository orders,
+        IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (_, role) = await users.GetUserContextAsync(keycloakId);
+        if (role != "admin") return Results.Forbid();
+
+        var updated = await orders.RescheduleOrderAsync(id, req.PlannedStartAt, req.PlannedCompleteAt);
+        return updated
+            ? Results.Ok(new { id })
+            : Results.NotFound(new { error = "Order not found or already completed/cancelled" });
+    }
+
+    private static async Task<IResult> ResequenceOrder(
+        int id, ResequenceOrderRequest req, IOrderRepository orders,
+        IUserRepository users, HttpContext ctx)
+    {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (_, role) = await users.GetUserContextAsync(keycloakId);
+        if (role != "admin") return Results.Forbid();
+
+        if (req.Direction != "up" && req.Direction != "down")
+            return Results.BadRequest(new { error = "Direction must be 'up' or 'down'" });
+
+        var moved = await orders.ResequenceOrderAsync(id, req.Direction);
+        return moved
+            ? Results.Ok(new { id })
+            : Results.BadRequest(new { error = "Cannot move order further in that direction" });
     }
 
     private static async Task<IResult> TransitionStatus(

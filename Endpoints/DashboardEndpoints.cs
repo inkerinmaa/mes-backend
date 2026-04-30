@@ -20,8 +20,15 @@ public static class DashboardEndpoints
         return app;
     }
 
-    private static async Task<IResult> GetLogs(ILogRepository logs, string? type, string? level, int limit = 20)
+    private static async Task<IResult> GetLogs(
+        ILogRepository logs,
+        IUserRepository users,
+        HttpContext ctx,
+        string? type, string? level, int limit = 20)
     {
+        var keycloakId = ctx.User.FindFirst("sub")?.Value ?? "";
+        var (_, role) = await users.GetUserContextAsync(keycloakId);
+        if (role != "admin") return Results.Forbid();
         return Results.Ok(await logs.GetRecentAsync(limit, type, level));
     }
 

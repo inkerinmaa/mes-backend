@@ -5,5 +5,5 @@ namespace MyDashboardApi.Database.Repositories;
 public interface IMachineStateRepository
 {
     Task<IEnumerable<MachineState>> GetStatesForLineAsync(int lineId, DateTimeOffset from);
-    Task InsertStateAsync(int lineId, string state);
+    Task<int> InsertStateAsync(int lineId, string state);
 }

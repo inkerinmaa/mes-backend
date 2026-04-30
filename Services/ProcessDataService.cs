@@ -70,7 +70,7 @@ public class ProcessDataService : BackgroundService
 
             // Every 10 ticks (~30 s) randomly transition one line to a new state
             _tickCount++;
-            if (_tickCount % 10 == 0)
+            if (_tickCount % 1200 == 0)
             {
                 var lineIndex = Random.Shared.Next(3);
                 var newState = _statePool[Random.Shared.Next(_statePool.Length)];
@@ -84,6 +84,11 @@ public class ProcessDataService : BackgroundService
                             "MachineStateUpdated",
                             new { lineId = lineIndex + 1 },
                             CancellationToken.None);
+                        if (newState == "stopped")
+                            await _hubContext.Clients.All.SendAsync(
+                                "StopInserted",
+                                new { lineId = lineIndex + 1 },
+                                CancellationToken.None);
                         _logger.LogInformation("Line {Line} state changed to {State}", lineIndex + 1, newState);
                     }
                     catch (Exception ex)

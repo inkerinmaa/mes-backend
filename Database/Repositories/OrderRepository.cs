@@ -13,7 +13,10 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         return await conn.QueryAsync<Order>("""
             WITH active_ranked AS (
                 SELECT id,
-                    ROW_NUMBER() OVER (ORDER BY planned_start_at NULLS LAST, created_at) AS queue_pos
+                    ROW_NUMBER() OVER (
+                        PARTITION BY production_line_id
+                        ORDER BY COALESCE(seq_order, 2147483647), planned_start_at NULLS LAST, created_at
+                    ) AS queue_pos
                 FROM orders
                 WHERE status IN ('created', 'paused')
             )
@@ -39,6 +42,7 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                      ELSE o.pkg_produced
                 END::int AS pkg_produced,
                 o.comment,
+                o.seq_order,
                 CASE o.status
                     WHEN 'running'   THEN 'In Process'
                     WHEN 'completed' THEN 'Completed'
@@ -62,6 +66,8 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                     WHEN 'cancelled' THEN 3
                     ELSE 4
                 END,
+                o.production_line_id,
+                COALESCE(o.seq_order, 2147483647),
                 o.planned_start_at NULLS LAST,
                 o.created_at
             """);
@@ -72,7 +78,7 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
         await using var conn = await dataSource.OpenConnectionAsync();
         var order = await conn.QuerySingleAsync<Order>("""
             WITH inserted AS (
-                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, created_by_id)
+                INSERT INTO orders (order_number, sku_id, production_line_id, volume, uom_id, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, created_by_id, seq_order)
                 SELECT @orderNumber, s.id, @lineId, @volume, u.id, @priority,
                        @dueDate::date, @plannedStartAt::timestamptz, @plannedCompleteAt::timestamptz,
                        @cage, @cageSize,
@@ -82,11 +88,13 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
                        CASE WHEN u.code = 'pkg' THEN 0
                             ELSE FLOOR(RANDOM() * 500 + 1)::int
                        END,
-                       @userId
+                       @userId,
+                       (SELECT COALESCE(MAX(seq_order), 0) + 1 FROM orders
+                        WHERE production_line_id = @lineId AND status IN ('created', 'paused'))
                 FROM skus s, uom u
                 WHERE s.code = @skuCode AND u.code = @uomCode
                 RETURNING id, order_number, sku_id, production_line_id, volume, uom_id,
-                          status, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, comment
+                          status, priority, due_date, planned_start_at, planned_complete_at, cage, cage_size, produced_volume, pkg_produced, comment, seq_order
             )
             SELECT
                 i.id,
@@ -297,5 +305,74 @@ public class OrderRepository(NpgsqlDataSource dataSource, ILogger<OrderRepositor
             "DELETE FROM cages WHERE id = @cageId",
             new { cageId });
         return rows > 0;
+    }
+
+    public async Task<bool> ResequenceOrderAsync(int orderId, string direction)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+
+        var order = await conn.QuerySingleOrDefaultAsync<SeqRow>(
+            "SELECT id, seq_order, production_line_id FROM orders WHERE id = @orderId AND status IN ('created', 'paused')",
+            new { orderId });
+
+        if (order is null) return false;
+
+        var adjacent = direction == "up"
+            ? await conn.QuerySingleOrDefaultAsync<SeqRow>("""
+                SELECT id, seq_order, production_line_id FROM orders
+                WHERE production_line_id = @lineId
+                  AND status IN ('created', 'paused')
+                  AND id != @orderId
+                  AND COALESCE(seq_order, 2147483647) < COALESCE(@seqOrder, 2147483647)
+                ORDER BY COALESCE(seq_order, 2147483647) DESC
+                LIMIT 1
+                """,
+                new { lineId = order.ProductionLineId, orderId, seqOrder = order.SeqOrder })
+            : await conn.QuerySingleOrDefaultAsync<SeqRow>("""
+                SELECT id, seq_order, production_line_id FROM orders
+                WHERE production_line_id = @lineId
+                  AND status IN ('created', 'paused')
+                  AND id != @orderId
+                  AND COALESCE(seq_order, 2147483647) > COALESCE(@seqOrder, 2147483647)
+                ORDER BY COALESCE(seq_order, 2147483647) ASC
+                LIMIT 1
+                """,
+                new { lineId = order.ProductionLineId, orderId, seqOrder = order.SeqOrder });
+
+        if (adjacent is null) return false;
+
+        await using var tx = await conn.BeginTransactionAsync();
+        await conn.ExecuteAsync("UPDATE orders SET seq_order = @seq WHERE id = @id",
+            new { seq = adjacent.SeqOrder, id = orderId }, tx);
+        await conn.ExecuteAsync("UPDATE orders SET seq_order = @seq WHERE id = @id",
+            new { seq = order.SeqOrder, id = adjacent.Id }, tx);
+        await tx.CommitAsync();
+        return true;
+    }
+
+    public async Task<bool> RescheduleOrderAsync(int orderId, string? plannedStartAt, string? plannedCompleteAt)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        var rows = await conn.ExecuteAsync("""
+            UPDATE orders
+            SET planned_start_at    = @plannedStartAt::timestamptz,
+                planned_complete_at = @plannedCompleteAt::timestamptz,
+                updated_at          = NOW()
+            WHERE id = @orderId AND status NOT IN ('completed', 'cancelled')
+            """,
+            new
+            {
+                orderId,
+                plannedStartAt    = string.IsNullOrEmpty(plannedStartAt)    ? null : plannedStartAt,
+                plannedCompleteAt = string.IsNullOrEmpty(plannedCompleteAt) ? null : plannedCompleteAt
+            });
+        return rows > 0;
+    }
+
+    private class SeqRow
+    {
+        public int Id { get; set; }
+        public int? SeqOrder { get; set; }
+        public int ProductionLineId { get; set; }
     }
 }
