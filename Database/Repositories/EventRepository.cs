@@ -112,6 +112,17 @@ public class EventRepository(NpgsqlDataSource dataSource) : IEventRepository
             });
     }
 
+    public async Task<int> CloseOpenEventsByLineAsync(int lineId)
+    {
+        await using var conn = await dataSource.OpenConnectionAsync();
+        return await conn.ExecuteAsync("""
+            UPDATE production_events
+            SET end_at = NOW()
+            WHERE line_id = @lineId AND end_at IS NULL
+            """,
+            new { lineId });
+    }
+
     public async Task<bool> CloseEventAsync(int id, string? endAt, string? description)
     {
         await using var conn = await dataSource.OpenConnectionAsync();

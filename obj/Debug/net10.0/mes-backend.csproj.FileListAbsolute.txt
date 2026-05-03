@@ -48,3 +48,13 @@
 /home/nik/projects/mes-backend/bin/Debug/net10.0/Microsoft.NET.StringTools.dll
 /home/nik/projects/mes-backend/bin/Debug/net10.0/Pipelines.Sockets.Unofficial.dll
 /home/nik/projects/mes-backend/bin/Debug/net10.0/StackExchange.Redis.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Abstractions.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Core.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Hosting.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.JetStream.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.KeyValueStore.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.ObjectStore.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Serializers.Json.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Services.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Client.Simplified.dll
+/home/nik/projects/mes-backend/bin/Debug/net10.0/NATS.Net.dll

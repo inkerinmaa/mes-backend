@@ -16,12 +16,15 @@ public static class MachineStateEndpoints
         group.MapPost("/", async (
             [FromBody] MachineStateRequest req,
             IMachineStateRepository repo,
+            IEventRepository events,
             IHubContext<DashboardHub> hub) =>
         {
             if (!_validStates.Contains(req.State))
                 return Results.BadRequest($"State must be one of: {string.Join(", ", _validStates)}");
 
             await repo.InsertStateAsync(req.LineId, req.State);
+            if (req.State != "stopped")
+                await events.CloseOpenEventsByLineAsync(req.LineId);
             await hub.Clients.All.SendAsync("MachineStateUpdated", new { lineId = req.LineId });
             if (req.State == "stopped")
                 await hub.Clients.All.SendAsync("StopInserted", new { lineId = req.LineId });

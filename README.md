@@ -8,6 +8,7 @@
 # Prerequisites: .NET 10 SDK, Docker (PostgreSQL + Keycloak running)
 cd ~/projects/dwh && docker compose up -d
 docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/init.sql
+docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/seed.sql
 
 cd ~/projects/mes-backend
 dotnet run
@@ -43,6 +44,7 @@ cd ~/projects/dwh
 docker compose up -d
 # Wait ~5 s for Postgres to initialise
 docker exec -i postgres-db psql -U nik -d mydb < init.sql
+docker exec -i postgres-db psql -U nik -d mydb < seed.sql
 ```
 
 ### 4. Configure Keycloak
@@ -365,11 +367,26 @@ Append-only timeline. Duration computed via `LEAD(ts) OVER (...) - ts`.
 ### `logs`
 Written by `DbLoggerProvider`. Category → type mapping: `UserRepository`→USER, `OrderRepository`→PROCESS, others→APP.
 
+### ClickHouse historian
+
+`ReportRepository` queries `historian.production_metrics` (5-min) and `historian.energy_metrics` (15-min) via HTTP API. Results are aggregated by `order_number` using SUM/AVG, then enriched with SKU info from PostgreSQL.
+
+| Report | Data source | Key metrics |
+|--------|-------------|-------------|
+| PKF | `production_metrics` | Basalt (t), Binder (kg), Wool (t), Waste (kg), Avg Efficiency (%) |
+| Energy | `energy_metrics` | Gas (m³), Electricity (kWh), Water (m³) |
+
+### `products` + setpoint tables
+Product master with six related setpoint tables (`general_sp`, `saws_sp`, `tahu_sp`, `bundler_sp`, `consumables_sp`, `ul_sp`). Each has `UNIQUE (product_id)` — one row per product. `PATCH /api/products/{id}` upserts only the setpoint sections included in the request body (sections omitted are left unchanged).
+
 ### `settings`
 | Key | Default |
 |-----|---------|
 | `timeline_auto_refresh_enabled` | `true` |
 | `timeline_refresh_interval_seconds` | `60` |
+| `show_efficiency_chart` | `true` |
+
+Settings rows must pre-exist in the DB — `PATCH /api/settings/{key}` does a plain `UPDATE` (no upsert). If a key is missing the endpoint returns 404. Add new keys to `~/projects/dwh/seed.sql`.
 
 ---
 
@@ -407,6 +424,13 @@ All require JWT Bearer (Keycloak). Admin-only endpoints return 403 for viewers.
 | GET | `/api/users` | any | All users |
 | PATCH | `/api/users/{id}/role` | **admin** | Change user role |
 | POST | `/api/machine-states` | any | Insert state event + broadcast `MachineStateUpdated` |
+| GET | `/api/reports/pkf?lineId=&startDate=&endDate=` | any | PKF report by period |
+| GET | `/api/reports/pkf?orderNumber=` | any | PKF report for single order |
+| GET | `/api/reports/energy?lineId=&startDate=&endDate=` | any | Energy report by period |
+| GET | `/api/reports/energy?orderNumber=` | any | Energy report for single order |
+| GET | `/api/products` | any | Product list (id, number, sku, description, code) |
+| GET | `/api/products/{id}` | any | Full product detail with all six setpoint objects |
+| PATCH | `/api/products/{id}` | **admin** | Update product fields + upsert setpoint sections |
 
 ---
 
@@ -447,14 +471,18 @@ mes-backend/
 ├── Program.cs                        DI, middleware, endpoint mapping
 ├── Models/
 │   ├── Order.cs                      Order, OrderDetail, CageEntry, request records
+│   ├── Product.cs                    ProductListItem, ProductDetail, setpoint POCOs, UpdateProductRequest
 │   └── ...
 ├── Database/Repositories/
 │   ├── IOrderRepository + OrderRepository
 │   ├── IUserRepository + UserRepository
+│   ├── IProductRepository + ProductRepository
 │   └── ...
 ├── Endpoints/
 │   ├── OrderEndpoints.cs
 │   ├── UserEndpoints.cs
+│   ├── ProductEndpoints.cs
+│   ├── ReportEndpoints.cs
 │   └── ...
 ├── Hubs/DashboardHub.cs
 ├── Services/

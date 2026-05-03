@@ -8,4 +8,5 @@ public interface IEventRepository
     Task<IEnumerable<UnacknowledgedStop>> GetUnacknowledgedStopsAsync();
     Task<ProductionEvent> CreateEventAsync(CreateEventRequest req, int? userId, string createdBy);
     Task<bool> CloseEventAsync(int id, string? endAt, string? description);
+    Task<int> CloseOpenEventsByLineAsync(int lineId);
 }

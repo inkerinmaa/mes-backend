@@ -61,6 +61,10 @@
               "target": "Package",
               "version": "[10.0.7, )"
             },
+            "NATS.Net": {
+              "target": "Package",
+              "version": "[2.7.3, )"
+            },
             "Npgsql": {
               "target": "Package",
               "version": "[9.0.3, )"

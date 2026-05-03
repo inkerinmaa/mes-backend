@@ -26,6 +26,9 @@
   - `IUomRepository` / `UomRepository` — unit-of-measure lookup
   - `ILogRepository` / `LogRepository` — structured app event log (read + write)
   - `IMachineStateRepository` / `MachineStateRepository` — production line state timeline
+  - `IProductRepository` / `ProductRepository` — product master + all six setpoint tables
+  - `IReportRepository` / `ReportRepository` — PKF and energy reports via ClickHouse HTTP API + PostgreSQL enrichment
+  - `IProcessRepository` / `ProcessRepository` — latest process parameter values from `historian.process_snapshots` via ClickHouse
 - `Hubs/DashboardHub.cs` — SignalR hub at `/hubs/dashboard`
 - `Services/` — background services and custom logging
   - `ProcessDataService.cs` — simulates OPC UA telemetry every 3 s; also randomly transitions one production line to a new state every ~30 s, writes it to `machine_states`, and broadcasts `MachineStateUpdated { lineId }` via SignalR.
@@ -34,9 +37,10 @@
 - `appsettings.json` — connection strings, OPC UA URL, auth config
 
 ## Database schema
-Schema lives in `~/projects/dwh/init.sql` — apply once after `docker compose up`:
+Schema lives in `~/projects/dwh/init.sql` (DDL) and `~/projects/dwh/seed.sql` (test data). Apply in order after `docker compose up`:
 ```bash
 docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/init.sql
+docker exec -i postgres-db psql -U nik -d mydb < ~/projects/dwh/seed.sql
 ```
 The API does not initialize or migrate the schema on startup.
 
@@ -54,6 +58,13 @@ The API does not initialize or migrate the schema on startup.
 | `machine_states` | `id`, `production_line_id`, `state` (running/warning/stopped), `ts` | Append-only event log; duration computed via `LEAD(ts) OVER (...) - ts`; `id` returned by `InsertStateAsync` for linking events |
 | `production_events` | `id`, `line_id`, `order_id?`, `machine_state_id?`, `event_type`, `severity`, `title`, `description`, `start_at`, `end_at?`, `created_by_id`, `created_at` | Operator-created annotations; `machine_state_id` links to an auto-detected stop |
 | `logs` | `type` (USER/PROCESS/APP/EQUIPMENT/INTEGRATION), `message`, `level` (DEBUG/INFO/WARNING/ERROR/CRITICAL), `ts` | Written by `DbLoggerProvider` for all `MyDashboardApi.*` log lines ≥ INFO |
+| `products` | `number` (unique), `description`, `sku`, `code`, `package_code`, `initial_code`, `instruction`, `length`, `width`, `thickness`, `density` | Product master record |
+| `general_sp` | `product_id` (unique FK), `package`, `abc_cat`, `waste_suply`, `drum_pressure`, `saw_cross`, `product_type`, `energy_class`, `binder_type`, … | General setpoints; one row per product |
+| `saws_sp` | `product_id` (unique FK), `trimming_waste_ows`, `plates_in_pkg`, `cut_direction`, `layers`, `sheet_width`, `cut_width`, … | Saw setpoints |
+| `tahu_sp` | `product_id` (unique FK), `tahu_finish_pack_height`, `tahu_output_height`, `tahu_film_width`, `tahu_foil_code`, … | TAHU packaging setpoints |
+| `bundler_sp` | `product_id` (unique FK), `bundler_packs_per_bundle`, `bundler_comp_length`, `bundler_output_length` | Bundler setpoints |
+| `consumables_sp` | `product_id` (unique FK), `bundle_plastic_code`, `hooder_plastic_code`, `wrapper_plastic_code`, `check_layers` | Consumables reference; `hooder_plastic_code` NULL for products without hooding |
+| `ul_sp` | `product_id` (unique FK), `ul_product_per_layer`, `ul_pallet_layers`, `ul_pallet_dim`, `ul_pallet_height`, `ul_use_hooding`, `ul_use_glue`, `ul_use_wrapping`, … | Unit load / palletizing setpoints |
 
 ## Role model
 
@@ -143,6 +154,14 @@ if (role != "admin") return Results.Forbid();
 | GET | `/api/events/unacknowledged` | Stopped states in last 24 h with no linked production event |
 | POST | `/api/events` | Create a production event (all authenticated users) |
 | PATCH | `/api/events/{id}/close` | Close an open event `{ endAt?, description? }` |
+| GET | `/api/products` | Product list (id, number, sku, description, code) |
+| GET | `/api/products/{id}` | Full product detail with all six setpoint objects |
+| PATCH | `/api/products/{id}` | Update product fields + upsert setpoint sections (admin) |
+| GET | `/api/reports/pkf?lineId=&startDate=&endDate=` | PKF report by period from ClickHouse historian |
+| GET | `/api/reports/pkf?orderNumber=` | PKF report for a single order |
+| GET | `/api/reports/energy?lineId=&startDate=&endDate=` | Energy report by period |
+| GET | `/api/reports/energy?orderNumber=` | Energy report for a single order |
+| GET | `/api/production/lines/{lineId}/units/{unit}/latest` | Latest process param values from ClickHouse `process_snapshots`; `unit` ∈ curing\|acon\|binder\|main\|package |
 
 ## SignalR events (`/hubs/dashboard`)
 - `OrdersUpdated` — every 5 s, `{ value, variation }`
@@ -173,6 +192,9 @@ created ──[start]──► running ──[pause]──► paused
 
 ### DbLoggerProvider
 Intercepts `MyDashboardApi.*` log lines ≥ Information. Maps category → type: `UserRepository`→USER, `OrderRepository`→PROCESS, everything else→APP. Fire-and-forget; swallows own errors.
+
+### ClickHouse integration (ReportRepository)
+Uses a named `HttpClient` (`"clickhouse"`) configured in `Program.cs` with ClickHouse HTTP API at `http://localhost:8123`. Credentials via `X-ClickHouse-User` / `X-ClickHouse-Key` headers. Queries target the `historian` database. Responses are NDJSON (FORMAT JSONEachRow), deserialized with `JsonNamingPolicy.CamelCase`. SQL column aliases must match camelCase C# property names. Input safety: `orderNumber` validated by regex `^[A-Za-z0-9\-]+$`; dates by `DateOnly.TryParse`.
 
 ### Dapper mapping
 `DefaultTypeMap.MatchNamesWithUnderscores = true` is set globally — `snake_case` SQL columns map to `PascalCase` C# properties. Flat results use positional records; types with nested lists (e.g. `OrderDetail`) use POCO classes.

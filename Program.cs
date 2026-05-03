@@ -66,6 +66,7 @@ if (!string.IsNullOrEmpty(redisConn))
     signalR.AddStackExchangeRedis(redisConn);
 builder.Services.AddHostedService<OrdersBackgroundService>();
 builder.Services.AddHostedService<ProcessDataService>();
+builder.Services.AddHostedService<NatsLineStateService>();
 
 var connStr = builder.Configuration.GetConnectionString("Postgres")!;
 var dataSource = Npgsql.NpgsqlDataSource.Create(connStr);
@@ -79,7 +80,22 @@ builder.Services.AddSingleton<ILogRepository, LogRepository>();
 builder.Services.AddSingleton<IMachineStateRepository, MachineStateRepository>();
 builder.Services.AddSingleton<IEventRepository, EventRepository>();
 builder.Services.AddSingleton<ISettingsRepository, SettingsRepository>();
+builder.Services.AddSingleton<IProductRepository, ProductRepository>();
+builder.Services.AddSingleton<IMaterialRepository, MaterialRepository>();
 builder.Logging.Services.AddSingleton<ILoggerProvider, DbLoggerProvider>();
+
+builder.Services.AddHttpClient("clickhouse", client =>
+{
+    var url  = builder.Configuration["ClickHouse:Url"]!;
+    var user = builder.Configuration["ClickHouse:Username"]!;
+    var pass = builder.Configuration["ClickHouse:Password"]!;
+    var db   = builder.Configuration["ClickHouse:Database"]!;
+    client.BaseAddress = new Uri($"{url}/?database={db}");
+    client.DefaultRequestHeaders.Add("X-ClickHouse-User", user);
+    client.DefaultRequestHeaders.Add("X-ClickHouse-Key",  pass);
+});
+builder.Services.AddSingleton<IReportRepository, ReportRepository>();
+builder.Services.AddSingleton<IProcessRepository, ProcessRepository>();
 
 var app = builder.Build();
 
@@ -127,6 +143,10 @@ app.MapUomEndpoints();
 app.MapUserEndpoints();
 app.MapNotificationEndpoints();
 app.MapMemberEndpoints();
+app.MapProductEndpoints();
+app.MapMaterialEndpoints();
+app.MapReportEndpoints();
+app.MapProductionEndpoints();
 app.MapHub<DashboardHub>("/hubs/dashboard").RequireAuthorization();
 
 app.Run();
